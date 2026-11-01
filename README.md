@@ -6,8 +6,9 @@ Hellmouth is a static recompilation, not an emulator. The game's x86 code is tra
 a Mac program, and the Xbox kernel and libraries are implemented on the Mac. It also adds something the original never had:
 25 achievements, built into the game.
 
-> **No game files are included,** and no code generated from them. You build the port from your own copy of the disc, and
-> there is no download: a built copy contains the recompiled game, so please don't share one. Hellmouth is an unofficial fan
+> **No game files are included,** and no code generated from them. The installer builds the app on your Mac from your own
+> copy of the disc. A built copy contains the recompiled game, so there's no ready-made app to download, and please don't
+> share one. Hellmouth is an unofficial fan
 > project, and isn't affiliated with or endorsed by the owners of *Buffy the Vampire Slayer*, The Collective, Fox Interactive,
 > Electronic Arts, Microsoft or Apple. Please report problems [here](https://github.com/djrobson5/Hellmouth/issues), not to the
 > projects credited below.
@@ -51,7 +52,20 @@ game. The game's Brightness slider (Options, Display) lifts it.
   expected to work; `--any-release` lets one start if you want to try.
 - About 450 MB of disk for the build, which took about a minute on an M5 Pro, plus the game's own install on first start.
 
-## Building it
+## Installing it
+
+1. Download `Hellmouth-<version>.zip` from [Releases](https://github.com/djrobson5/Hellmouth/releases/latest) and unzip it.
+2. In Terminal, run the installer, with the path to your disc image (you can drag each file into the Terminal window):
+
+   ```sh
+   bash ~/Downloads/Hellmouth-<version>/install.sh "<path to image.iso>"
+   ```
+
+The installer checks your Mac and your disc, offers to install any Homebrew packages that are missing, recompiles the game and
+builds the app, then puts it in `/Applications` as `Buffy.app`. Open it and choose your disc image when it asks. The first build
+needs a network connection. Installing again leaves your saves and settings alone.
+
+## Building it by hand
 
 ```sh
 brew install cmake pkgconf ffmpeg sdl3 molten-vk vulkan-headers glslang
@@ -171,6 +185,7 @@ other settings, including pad scripts.
 | `sdk/host/` | The macOS program: window, events and sound |
 | `sdk/xdk/4432/layout.toml` | This XDK's data layouts, each value with the instruction that proves it |
 | `src/` | The game's side of the port: the achievement list, the hooks, widescreen |
+| `install.sh` | The installer: the steps under "Building it by hand", with checks |
 | `tools/` | `regen.sh`; `make_config.py` writes the recompiler's input; `disasm.py` disassembles by name; `coverage.py` reports what the game calls in the libraries |
 | `docs/xdk-4432.md` | How this game differs from what the SDK expected, and the evidence |
 | `assets/`, `config/game.toml`, `generated/`, `build/` | Not in the repository: the game's files, what's derived from them, and build output |
