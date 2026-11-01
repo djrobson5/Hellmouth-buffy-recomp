@@ -12,6 +12,17 @@ a Mac program, and the Xbox kernel and libraries are implemented on the Mac. It 
 > Electronic Arts, Microsoft or Apple. Please report problems [here](https://github.com/djrobson5/Hellmouth/issues), not to the
 > projects credited below.
 
+## Screenshots
+
+Taken from the port at its default settings, in 4:3.
+
+| | |
+|---|---|
+| ![The main menu, with Buffy under a full moon](docs/screenshots/01-main-menu.png) | ![Close-up of Giles talking in the opening cutscene](docs/screenshots/02-giles-cutscene.png) |
+| The main menu | Giles in the opening cutscene |
+| ![Over Giles's shoulder, with Buffy facing him outside the Spanish Mission](docs/screenshots/02-alt-giles-and-buffy.png) | ![Buffy seen from behind in the first level, with the HUD showing and a camera tip on screen](docs/screenshots/03-player-takes-over.png) |
+| Giles and Buffy at the Spanish Mission | The moment the player takes over |
+
 ## Status
 
 **Experimental. It hasn't been played through to the end yet.**
@@ -210,4 +221,4 @@ the Mac.
 
 Hellmouth's own code is under the MIT licence: `LICENSE`. `sdk/` comes from MIT-licensed projects: `sdk/LICENSE` and
 `sdk/ATHELAS-LICENSE`. Third-party code keeps its own licence: `sdk/THIRD_PARTY.txt`, `sdk/licenses/` and the licence files beside
-that code. None of this covers the game, which belongs to its owners.
+that code. None of this covers the game or the screenshots of it in `docs/screenshots/`, which belong to the game's owners.
