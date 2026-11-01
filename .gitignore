@@ -1,0 +1,30 @@
+# the player's own game files: never in a repository
+/Buffy the Vampire Slayer (USA)/
+/assets/
+*.iso
+*.xbe
+*.xpr
+*.pak
+*.wma
+*.wmv
+final.map
+
+# recompiled code, derived from the game
+/generated/
+
+# analysis dumps of the game's code and data
+/analysis/
+
+# build output and run folders
+/build/
+/out/
+/runs/
+*.o
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# written from final.map by tools/make_config.py
+/config/game.toml
