@@ -5,6 +5,7 @@
 #include <cmath>
 
 #include "app/app.h"
+#include "core/log.h"
 #include "gpu/backend.h"
 #include "gpu/texture.h"
 #include "gpu/vertex.h"
@@ -54,6 +55,42 @@ X86_FUNC(sub_002A4870) {
     kernel::W32(kHalfFovX, std::bit_cast<uint32_t>(x));
     __imp__sub_002A4870(ctx, base);
     kernel::W32(kHalfFovX, stored);
+}
+
+// The HUD's item (IWeaponStatDisplay::RenderViewItem) is a small 3D view: TGORender::CustomViewport_Render first draws a 2D
+// quad over its rectangle at z 1 with ZFUNC ALWAYS and z writes on (Context_ClearDepthRect), so the world can't hide it,
+// then sets a viewport on the same rectangle and draws the item. The quad is 2D, so it's pulled towards the middle with
+// the rest of the HUD, and the viewport has to follow or the item is drawn beside its ring and behind the world.
+bool g_custom_viewport = false;
+
+X86_EXTERN_FUNC(__imp__sub_00098020);
+X86_FUNC(sub_00098020) {
+    g_custom_viewport = true;
+    __imp__sub_00098020(ctx, base);
+    g_custom_viewport = false;
+}
+
+// CD3DMatrixState::SetViewport(D3DVIEWPORT8*), which View_InternalSetup calls once the projection is built: within a
+// custom view, narrowed as gpu::SqueezeScreenX narrows 2D (nothing about as wide as the frame), and kept inside the quad
+// where it lands between pixels. Only the device's viewport changes, so the item keeps the console's projection.
+X86_EXTERN_FUNC(__imp__sub_002A3830);
+X86_FUNC(sub_002A3830) {
+    const uint32_t vp = kernel::R32(ctx.esp + 4);
+    const float f = kConsoleAspect / app::FrameAspect();
+    const uint32_t x = vp ? kernel::R32(vp) : 0, w = vp ? kernel::R32(vp + 8) : 0;
+    if (!g_custom_viewport || !g_in_level || !vp || f >= 1.0f || w >= 0.9f * kGuestW) {
+        __imp__sub_002A3830(ctx, base);
+        return;
+    }
+    const float b = kGuestW / 2.0f * (1 - f);
+    const uint32_t left = uint32_t(std::ceil(f * float(x) + b)), right = uint32_t(std::floor(f * float(x + w) + b));
+    kernel::W32(vp, left);
+    kernel::W32(vp + 8, right > left ? right - left : 1);
+    LOG_FIRST(1, "widescreen: the HUD item's view at x %u, %u wide, is drawn at x %u, %u wide", x, w, left,
+              right > left ? right - left : 1);
+    __imp__sub_002A3830(ctx, base);
+    kernel::W32(vp, x);
+    kernel::W32(vp + 8, w);
 }
 
 // TGameManagerImplementation::MapSet: only a level has a map. Each level, and the front end, is its own process.
