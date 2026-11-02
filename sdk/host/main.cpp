@@ -58,10 +58,16 @@ void RetryFullScreen() {
     }
 }
 
-// the window to the settings; window thread
-void ApplyNow() {
+// Full screen entered or left by the player (the green button, Control-Command-F) rather than by the setting. The
+// environment carries it over the level restarts, as the window it was done to doesn't outlive the process. It's never
+// saved: the next session starts as the setting says.
+constexpr const char* kFullScreenEnv = "BUFFY_FULL_SCREEN";
+
+// the window to the settings, or to full screen or not when `full` is 0 or 1; window thread
+void ApplyNow(int full = -1) {
     const Settings& s = Get();
-    if (s.display_mode == DisplayMode::Windowed) {
+    if (full < 0) full = s.display_mode != DisplayMode::Windowed;
+    if (!full) {
         g_full_screen_until = 0;
         SDL_SetWindowFullscreen(g_window, false);
         Mode out = Output();
@@ -444,6 +450,10 @@ void Event(const SDL_Event& e, bool& redraw) {
         case SDL_EVENT_WINDOW_FOCUS_LOST:
             app::SetFocus(false);
             break;
+        case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
+        case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
+            setenv(app::kFullScreenEnv, e.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN ? "1" : "0", 1);
+            break;
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
             app::g_pixel_height = uint32_t(e.window.data2);
             redraw = true;
@@ -575,7 +585,9 @@ int main() {
                                 SDL_WINDOW_RESIZABLE | SDL_WINDOW_METAL | SDL_WINDOW_HIGH_PIXEL_DENSITY);
     if (!g_window) Fail(kExitNoD3D12, L"The window couldn't be opened: " + std::filesystem::path(SDL_GetError()).wstring());
     SetDevelopmentIcon(g_window);
-    ApplyNow();
+    const char* full_screen = std::getenv(kFullScreenEnv);
+    if (full_screen) LOGR("window: full screen %s, as before the restart", full_screen[0] == '1' ? "on" : "off");
+    ApplyNow(full_screen ? full_screen[0] == '1' : -1);
     SDL_ShowWindow(g_window);
     SDL_RaiseWindow(g_window);
     int pixel_w = 0, pixel_h = 0;
