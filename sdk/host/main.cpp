@@ -628,6 +628,13 @@ int main() {
         }
         host::ScriptTick();
         RetryFullScreen();
+        // the pointer is hidden over the game and shown with the menu, as WM_SETCURSOR does on Windows. SDL hides it only
+        // over the window's picture, so the title bar and the rest of the desktop keep it.
+        if (static int hidden = -1; hidden != int(!OverlayOpen())) {
+            hidden = int(!OverlayOpen());
+            if (hidden) SDL_HideCursor();
+            else SDL_ShowCursor();
+        }
         host::PreviewDraw(redraw);
         if (Get().show_fps != show_fps) {  // changed in the menu
             show_fps = Get().show_fps;
