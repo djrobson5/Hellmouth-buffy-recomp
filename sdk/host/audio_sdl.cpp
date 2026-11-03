@@ -12,6 +12,7 @@
 #include "app/app.h"
 #include "audio/audio.h"
 #include "core/log.h"
+#include "kernel/kernel.h"
 
 namespace audio {
 
@@ -37,7 +38,8 @@ void StartOutput(std::function<void(float*, uint32_t)> render) {
             }
             // paused (app::Held): the mixer takes no time, so the game's sounds and music wait where they were;
             // muted, they play on unheard
-            if (app::Held()) std::fill(b.begin(), b.end(), 0.0f);
+            // and handing over to the next instance, which has its own sound
+            if (app::Held() || kernel::g_relaunching) std::fill(b.begin(), b.end(), 0.0f);
             else {
                 render(b.data(), kFrames);
                 if (app::Muted()) std::fill(b.begin(), b.end(), 0.0f);

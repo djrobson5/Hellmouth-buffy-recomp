@@ -29,10 +29,10 @@ if [ -d "$REPO/assets/achievements" ]; then mkdir -p "$OUT/achievements"; cp "$R
 IMGUI=$REPO/build/_deps/imgui-src
 [ -f "$IMGUI/imgui.h" ] || { mkdir -p "$(dirname "$IMGUI")"; git -c advice.detachedHead=false clone -q --depth 1 --branch v1.91.0 https://github.com/ocornut/imgui.git "$IMGUI"; }
 export HOST_OPT=-O2 HOST_FLAGS="$(pkg-config --cflags sdl3) -I$HERE -I$BREW/include -I$BREW/include/glslang -I$IMGUI -DXBE_HOST_VULKAN -DIMGUI_IMPL_VULKAN_NO_PROTOTYPES"
-export LINK_FLAGS="$(pkg-config --libs sdl3) -L$BREW/lib -Wl,-rpath,$BREW/lib -Wl,-headerpad_max_install_names -framework QuartzCore -framework CoreGraphics -framework Foundation -lglslang -lSPIRV -lglslang-default-resource-limits"
+export LINK_FLAGS="$(pkg-config --libs sdl3) -L$BREW/lib -Wl,-rpath,$BREW/lib -Wl,-headerpad_max_install_names -framework AppKit -framework QuartzCore -framework CoreGraphics -framework Foundation -lglslang -lSPIRV -lglslang-default-resource-limits"
 exec "$HERE/../harness/build.sh" -r "$REPO" -g "$GEN" -o "$OUT" -n "$NAME" ${GEN_OBJ:+-G "$GEN_OBJ"} \
     -x '/harness/(app_headless|main_test|pad_script|null_audio)\.cpp' \
-    -e "$HERE/main.cpp" -e "$HERE/preview.cpp" -e "$HERE/script_pad.cpp" -e "$HERE/audio_sdl.cpp" -e "$HERE/fps_overlay.mm" -e "$HERE/ui_events.cpp" \
+    -e "$HERE/main.cpp" -e "$HERE/preview.cpp" -e "$HERE/script_pad.cpp" -e "$HERE/audio_sdl.cpp" -e "$HERE/fps_overlay.mm" -e "$HERE/window_mac.mm" -e "$HERE/ui_events.cpp" \
     -e "$RT/app/achievements.cpp" -e "$RT/app/overlay.cpp" -e "$RT/app/subtitles.cpp" \
     -e "$IMGUI/imgui.cpp" -e "$IMGUI/imgui_draw.cpp" -e "$IMGUI/imgui_tables.cpp" -e "$IMGUI/imgui_widgets.cpp" -e "$IMGUI/backends/imgui_impl_vulkan.cpp" \
     -e "$RT/core/input.cpp" -e "$RT/app/keyboard.cpp" -e "$RT/app/game_files.cpp" -e "$RT/app/settings.cpp" \

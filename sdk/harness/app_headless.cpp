@@ -136,6 +136,10 @@ void OpenGameWindow(bool) {}
 bool StartHandover() { return false; }
 bool HandingOver() { return false; }
 void FinishHandover() {}
+void HandoverStarting() {}
+int HandoverOpen(const std::string&) { return -1; }
+void HandoverStarted(int) {}
+void HandoverFinished(int) {}
 
 std::recursive_mutex& UiLock() {
     static std::recursive_mutex m;

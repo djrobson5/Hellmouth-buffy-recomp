@@ -207,6 +207,12 @@ void OpenGameWindow(bool apply = true);  // any thread but the window thread's; 
 bool StartHandover();   // window thread, at launch; true: the game window starts hidden
 bool HandingOver();
 void FinishHandover();  // any thread but the window thread's: opens the game window, lets the old instance go
+// a Mac's side of the old instance (kernel::Relaunch): the window's place and size go in the environment for the next one
+// before it starts, and once it has, it may come forward. Any thread but the window thread's.
+void HandoverStarting();
+int HandoverOpen(const std::string& exe);  // the next instance as an app of its own: its pid, or -1 to start it as a process
+void HandoverStarted(int pid);
+void HandoverFinished(int pid);  // it has shown its window: it's brought forward
 
 // held around ImGui: the window thread's messages and the renderer's frame
 std::recursive_mutex& UiLock();

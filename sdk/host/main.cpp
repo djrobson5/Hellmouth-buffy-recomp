@@ -1,6 +1,7 @@
 // the host outside Windows, through SDL: window, events, files beside the exe; app/main.cpp's part. All of SDL's events
 // are taken here on the first thread, which macOS asks of a window, and which is also what brings the controllers' state
-// up to date. The menu is overlay.cpp's, given its window side by ui_events.cpp. No splash or handover yet.
+// up to date. The menu is overlay.cpp's, given its window side by ui_events.cpp. No splash. A level restart hands over
+// from one process's window to the next one's, as on Windows (StartHandover).
 #include <mach-o/dyld.h>
 #include <crt_externs.h>
 #include <fcntl.h>
@@ -18,6 +19,8 @@
 #include <map>
 #include <string>
 #include <thread>
+
+#include <poll.h>
 
 #include "app/app.h"
 #include "core/input.h"
@@ -56,6 +59,38 @@ void RetryFullScreen() {
         g_full_screen_next = now + 500;
         SDL_SetWindowFullscreen(g_window, true);
     }
+}
+
+// The window's place and size in points while it isn't in full screen, for the next instance after a level restart
+// (BUFFY_WINDOW): it opens just where this one is, over it. Window thread writes, the title's reads.
+std::atomic<int> g_place[4] = {};
+constexpr const char* kPlaceEnv = "BUFFY_WINDOW";
+
+// window thread
+void KeepPlace() {
+    if (SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN) return;
+    int x = 0, y = 0, w = 0, h = 0;
+    SDL_GetWindowPosition(g_window, &x, &y);
+    SDL_GetWindowSize(g_window, &w, &h);
+    g_place[0] = x, g_place[1] = y, g_place[2] = w, g_place[3] = h;
+}
+
+// The handover's new side: the window is there but can't be seen until the game has shown its first frames
+// (FinishHandover, from D3DDevice_Swap); then it can, comes forward, and the old instance is told it may go.
+std::string g_handover_fifo;
+std::atomic<bool> g_handing{false}, g_reveal{false};
+uint64_t g_handover_until = 0;
+
+// window thread
+void Reveal() {
+    host::WindowSeen(g_window, true);
+    SDL_RaiseWindow(g_window);
+    host::Activate();
+    const char byte = 1;
+    const int fd = open(g_handover_fifo.c_str(), O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0 || write(fd, &byte, 1) != 1) LOGW("handover: the previous instance wasn't there to tell");
+    if (fd >= 0) close(fd);
+    LOGI("handover: the window shows, the previous instance goes");
 }
 
 // Full screen entered or left by the player (the green button, Control-Command-F) rather than by the setting. The
@@ -255,9 +290,44 @@ bool OpenSplash() { return false; }
 void SplashFirstFrame() {}
 void CloseSplash() {}
 void OpenGameWindow(bool) {}
-bool StartHandover() { return false; }
-bool HandingOver() { return false; }
-void FinishHandover() {}
+bool StartHandover() {
+    const char* fifo = std::getenv("XBE_HANDOVER_FIFO");
+    if (!fifo) return false;
+    g_handover_fifo = fifo;
+    unsetenv("XBE_HANDOVER_FIFO");  // this instance's own restart makes one of its own
+    g_handover_until = SDL_GetTicks() + 8000;  // a game that shows nothing for so long still gets its window
+    g_handing = true;
+    LOGI("handover: the previous instance waits for the first frames");
+    return true;
+}
+
+bool HandingOver() { return g_handing; }
+
+void FinishHandover() {
+    if (g_handing.exchange(false)) g_reveal = true;
+}
+
+void HandoverStarting() {
+    if (!g_place[2]) return;
+    const std::string place = std::to_string(g_place[0]) + " " + std::to_string(g_place[1]) + " " +
+                              std::to_string(g_place[2]) + " " + std::to_string(g_place[3]);
+    setenv(kPlaceEnv, place.c_str(), 1);
+}
+
+int HandoverOpen(const std::string& exe) {
+    char** argv = *_NSGetArgv();
+    std::vector<std::string> args;
+    for (int i = 1; argv[i]; i++) args.push_back(argv[i]);
+    return host::OpenInstance(exe, args);
+}
+
+void HandoverFinished(int pid) {
+    SDL_RunOnMainThread([](void* p) { host::ActivateOther(int(intptr_t(p))); }, reinterpret_cast<void*>(intptr_t(pid)), true);
+}
+
+void HandoverStarted(int pid) {
+    SDL_RunOnMainThread([](void* p) { host::YieldActivation(int(intptr_t(p))); }, reinterpret_cast<void*>(intptr_t(pid)), false);
+}
 
 // the console's 60 frames a second unless [display] sets a cap; FPS=N in the environment instead, 0 for none. The
 // preview has no display to wait for.
@@ -458,8 +528,12 @@ void Event(const SDL_Event& e, bool& redraw) {
             app::g_pixel_height = uint32_t(e.window.data2);
             redraw = true;
             break;
-        case SDL_EVENT_WINDOW_EXPOSED:
         case SDL_EVENT_WINDOW_RESIZED:
+        case SDL_EVENT_WINDOW_MOVED:
+            app::KeepPlace();
+            redraw = true;
+            break;
+        case SDL_EVENT_WINDOW_EXPOSED:
             redraw = true;
             break;
         case SDL_EVENT_GAMEPAD_ADDED:
@@ -552,6 +626,11 @@ int main() {
     CloseLogOnCrash();
 
     SDL_SetHint(SDL_HINT_APP_NAME, "Buffy the Vampire Slayer");
+    // Full screen is a window over the whole screen, not a Space of its own: macOS's animation into a Space would play at
+    // every level restart, as the new instance's window can't be in the old one's Space. Losing the focus to the next
+    // instance mustn't minimize it either.
+    SDL_SetHint(SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES, "0");
+    SDL_SetHint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, "0");
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO))
         Fail(kExitNoD3D12, L"The window couldn't be opened: " + std::filesystem::path(SDL_GetError()).wstring());
     int v = SDL_GetVersion();
@@ -588,8 +667,26 @@ int main() {
     const char* full_screen = std::getenv(kFullScreenEnv);
     if (full_screen) LOGR("window: full screen %s, as before the restart", full_screen[0] == '1' ? "on" : "off");
     ApplyNow(full_screen ? full_screen[0] == '1' : -1);
+    int place[4] = {};
+    if (const char* p = std::getenv(kPlaceEnv); p && std::sscanf(p, "%d %d %d %d", &place[0], &place[1], &place[2], &place[3]) == 4 &&
+                                                place[2] > 0 && place[3] > 0) {
+        // in full screen it's the place to come back to
+        for (int i = 0; i < 4; i++) g_place[i] = place[i];
+        if (!(SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN)) {
+            SDL_SetWindowSize(g_window, place[2], place[3]);
+            SDL_SetWindowPosition(g_window, place[0], place[1]);
+        }
+    }
+    KeepPlace();
+    host::TakeFullScreenControls(g_window, [] {
+        const bool full = (SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN) != 0;
+        g_full_screen_until = 0;
+        SDL_SetWindowFullscreen(g_window, !full);
+    });
+    const bool handover = StartHandover();
+    if (handover) host::WindowSeen(g_window, false);
     SDL_ShowWindow(g_window);
-    SDL_RaiseWindow(g_window);
+    if (!handover) SDL_RaiseWindow(g_window);
     int pixel_w = 0, pixel_h = 0;
     SDL_GetWindowSizeInPixels(g_window, &pixel_w, &pixel_h);
     g_pixel_height = uint32_t(pixel_h);
@@ -628,13 +725,14 @@ int main() {
         }
         host::ScriptTick();
         RetryFullScreen();
-        // the pointer is hidden over the game and shown with the menu, as WM_SETCURSOR does on Windows. SDL hides it only
-        // over the window's picture, so the title bar and the rest of the desktop keep it.
-        if (static int hidden = -1; hidden != int(!OverlayOpen())) {
-            hidden = int(!OverlayOpen());
-            if (hidden) SDL_HideCursor();
-            else SDL_ShowCursor();
+        if (g_handing && SDL_GetTicks() >= g_handover_until) {
+            LOGW("handover: no frames yet, the window shows anyway");
+            FinishHandover();
         }
+        if (g_reveal.exchange(false)) Reveal();
+        // the pointer is hidden over the game and shown with the menu, as WM_SETCURSOR does on Windows
+        host::TakeKeys(g_window);
+        host::HidePointer(g_window, !OverlayOpen());
         host::PreviewDraw(redraw);
         if (Get().show_fps != show_fps) {  // changed in the menu
             show_fps = Get().show_fps;

@@ -19,7 +19,13 @@
 #include <unistd.h>
 #ifdef __APPLE__
 #include <crt_externs.h>
+#include <fcntl.h>
 #include <mach-o/dyld.h>
+#include <poll.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <spawn.h>
+#include <string>
 #endif
 #endif
 #include "xbe/xbe.h"
@@ -218,7 +224,64 @@ void Relaunch(const char* exe) {
     path = path.substr(0, path.find_last_of('/') + 1) + exe;
     setenv("XBE_RELAUNCHED", "1", 1);  // one log a session, as --relaunched on Windows
 #ifdef __APPLE__
-    // the arguments (--game, --instance) go along, as on Windows
+    // As on Windows, this window stays up until the next instance has shown its first frames, so the window doesn't close
+    // and open again. XBE_HANDOVER_FIFO names a pipe it writes to then. From inside an app the next instance is opened
+    // as an app of its own (app::HandoverOpen); a bare executable starts it as a process. The arguments (--game,
+    // --instance) go along, and none of this process's open files.
+    xnet::CloseSockets();
+    app::HandoverStarting();
+    char temp[1024] = {};
+    if (!confstr(_CS_DARWIN_USER_TEMP_DIR, temp, sizeof(temp))) std::strcpy(temp, "/tmp/");
+    const std::string fifo = std::string(temp) + app::kGame.log + "-handover-" + std::to_string(getpid());
+    unlink(fifo.c_str());
+    int ready = -1, keep = -1;
+    if (mkfifo(fifo.c_str(), 0600) == 0) {
+        ready = open(fifo.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+        keep = open(fifo.c_str(), O_WRONLY | O_NONBLOCK | O_CLOEXEC);  // so that reading waits, before the next one opens it
+        setenv("XBE_HANDOVER_FIFO", fifo.c_str(), 1);
+    }
+    int next = app::HandoverOpen(path);
+    if (next < 0) {
+        posix_spawnattr_t attr;
+        posix_spawnattr_init(&attr);
+        posix_spawnattr_setflags(&attr, POSIX_SPAWN_CLOEXEC_DEFAULT);
+        posix_spawn_file_actions_t files;
+        posix_spawn_file_actions_init(&files);
+        for (int fd : {0, 1, 2}) posix_spawn_file_actions_addinherit_np(&files, fd);
+        pid_t pid = 0;
+        if (const int failed = posix_spawn(&pid, path.c_str(), &files, &attr, *_NSGetArgv(), *_NSGetEnviron()))
+            LOGE("relaunch: cannot start %s: %s", path.c_str(), std::strerror(failed));
+        else next = int(pid);
+        posix_spawn_file_actions_destroy(&files);
+        posix_spawnattr_destroy(&attr);
+    }
+    if (next > 0) {
+        g_relaunching = true;  // and the sound goes quiet
+        app::HandoverStarted(next);
+        LOGI("relaunch: process %d starts, this one waits for its first frames", next);
+        logx::Flush();
+        const char* how = "didn't show anything in 15 s";
+        for (int waited = 0; waited < 15000; waited += 100) {
+            pollfd p{ready, POLLIN, 0};
+            char byte = 0;
+            if (ready >= 0 && poll(&p, 1, 100) > 0 && read(ready, &byte, 1) == 1) {
+                how = "took over";
+                app::HandoverFinished(next);
+                break;
+            }
+            if (ready < 0) usleep(100000);
+            if (kill(next, 0) != 0 && errno == ESRCH) {
+                how = "ended before it showed anything";
+                break;
+            }
+        }
+        LOGI("relaunch: process %d %s", next, how);
+        unlink(fifo.c_str());
+        logx::Flush();
+        std::_Exit(0);
+    }
+    if (ready >= 0) close(ready), close(keep), unlink(fifo.c_str());
+    unsetenv("XBE_HANDOVER_FIFO");
     execv(path.c_str(), *_NSGetArgv());
 #else
     execl(path.c_str(), path.c_str(), nullptr);
