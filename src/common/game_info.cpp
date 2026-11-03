@@ -41,7 +41,7 @@ const app::GameInfo app::kGame = {
         {"secret_30", "The Watcher's Diary", "Find 30 secrets."},
         {"secret_all", "Giles Would Be Proud", "Find all 77 secrets."},
         {"die_once", "Killed by Death", "Die for the first time."},
-        {"chapter_deathless", "Not Today", "Finish a chapter without dying."},
+        {"chapter_deathless", "Not Today", "Go from a new game or a gang meeting in the Library to the next meeting (or the end) without dying."},
         {"history", "Teacher's Pet", "Finish Buffy History 101 in Extras."},
     },
 };
