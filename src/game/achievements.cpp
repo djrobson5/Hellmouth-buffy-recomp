@@ -46,7 +46,8 @@ void EndChapter(int chapter) {
 // ---- leaving a level. Bosses are by the level: some never die in a way a death hook would see. Only IMapCompleted and
 // IMapIndexer leave a level from play: quitting, the menus and a reload after dying don't come through here. IMapCompleted goes
 // on along the game's level table. IMapIndexer can go to any numbered level of the mission, backwards too, so it only counts
-// when it goes to the level that comes next.
+// when it goes to the level that comes next. Its index 0 names no map, and the game then goes on along the table as
+// IMapCompleted does: the Spanish Mission's exits are all index 0, and in play _2 went to _3 and _3 to m01_highschool_1.
 struct LevelEnd {
     const char* map;
     const char* next;   // in the disc's level table
@@ -67,7 +68,7 @@ constexpr LevelEnd kLevelEnds[] = {
     {"m11_dreamrealm_3", "m11_dreamrealm_1", "boss_dark_buffy", 0},
     {"m11_dreamrealm_4", "m12_apse", "boss_dreamers", 0},
     {"m12_apse", "m12_bronze-ending", "boss_master", 8},
-    {"g00_buffyhistory", "g00_buffyhistory0", "history", 0},  // the end of it asks for index 0, which goes back to the menu
+    {"g00_buffyhistory", "the menu", "history", 0},  // the end of it asks for index 0, which goes back to the menu
 };
 
 // target: where IMapIndexer is going, null for IMapCompleted
@@ -155,8 +156,12 @@ X86_FUNC(sub_000EEB50) {
 // IMapIndexer::DoMapChange
 X86_EXTERN_FUNC(__imp__sub_000EECD0);
 X86_FUNC(sub_000EECD0) {
-    const std::string target = IndexerTarget(ctx.ecx);
-    LeftLevel(&target);
+    if (kernel::R32(ctx.ecx + 0x290) == 0) {
+        LeftLevel(nullptr);
+    } else {
+        const std::string target = IndexerTarget(ctx.ecx);
+        LeftLevel(&target);
+    }
     __imp__sub_000EECD0(ctx, base);
 }
 
