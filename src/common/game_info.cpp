@@ -15,6 +15,10 @@ const app::GameInfo app::kGame = {
     .title_id = 0x45410012,
     .images = {{"default.xbe", "Buffy"}},  // lower case: the launch path is compared in lower case
     .init = WidescreenInit,
+    // TInputDeviceController::Poll (0x244F0), both sticks: centred inside 13107.2 of 32768, then rising to full at
+    // 13107.2 + 18204.44 (1 / its scale, 0x618C74)
+    .stick_deadzone = 13107.2f / 32768,
+    .stick_full = (13107.2f + 18204.44f) / 32768,
     // what earns each is in game/achievements.cpp. The ids are permanent once released. Descriptions name places, not bosses:
     // the menu's page lists them all from the start.
     .achievements = {

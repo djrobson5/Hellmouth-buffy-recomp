@@ -246,6 +246,10 @@ struct GameInfo {
     void (*ui)(double fps);        // each frame inside the ImGui frame, UiLock held
     void (*pad)(int port, input::Pad& pad);  // a polled pad before the game gets it
     void (*rumble)(int port, uint16_t& left, uint16_t& right);
+    // the game's own stick handling, so that [input] stick_deadzone can go below it: a round dead zone and the push at
+    // which its reading is full, as fractions of a stick's travel. 0 if not known: the setting can then only add to it.
+    float stick_deadzone = 0;
+    float stick_full = 1;
     // [controls] in the settings (the overlay, --describe-settings): off for a game that remaps its buttons another way
     bool remap_controls = true;
     // [keyboard]: the game's own default keys where they differ from keys::kDefaults ({keys::kBlack, "Tab"})

@@ -17,7 +17,10 @@ namespace input {
 namespace {
 
 // [input] stick_deadzone: a stick inside the circle reads centred, the rest is stretched to the full range again so
-// a small push still moves; out of range or 0 leaves the stick as it is
+// a small push still moves; out of range or 0 leaves the stick as it is. A game that says what its own dead zone is
+// (GameInfo::stick_deadzone) gets the stick it needs to read just this one instead, smaller than its own or larger:
+// a push just past the setting's circle reaches the game just past its circle, and the rest follows on to where it
+// reads full.
 void Deadzone(int& x, int& y, uint32_t pct) {
     if (!pct || pct >= 100) return;
     float dz = pct / 100.0f;
@@ -28,6 +31,10 @@ void Deadzone(int& x, int& y, uint32_t pct) {
         return;
     }
     float k = (mag - dz) / (1 - dz) / mag;  // corners past the circle stay at the corners
+    if (const float own = app::kGame.stick_deadzone, full = app::kGame.stick_full; own > 0 && full > own && dz < full) {
+        const float reading = std::min(1.0f, (mag - dz) / (full - dz));  // what the game should make of it, 0 to 1
+        k = (own + reading * (full - own)) / mag;
+    }
     x = std::clamp(int(std::lround(fx * k * 32767)), -32768, 32767);
     y = std::clamp(int(std::lround(fy * k * 32767)), -32768, 32767);
 }

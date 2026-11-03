@@ -160,8 +160,9 @@ std::vector<cfg::Desc> SettingsList() {
         {"input", "vibration", Type::Int, "Vibration",
          "Controller rumble from the original Xbox version. 0 turns it off.", nullptr, &s.vibration, nullptr, 0, 100},
         {"input", "stick_deadzone", Type::Int, "Stick deadzone",
-         "How far a stick must move before it counts, in % of its travel. 0 leaves it to the game, as on the Xbox; "
-         "raise it if your character drifts.",
+         "How far a stick must move before it counts, in % of its travel. 0 leaves it to the game, as on the Xbox. "
+         "Where the game's own is known, any other value replaces it, so a lower one makes the sticks quicker to "
+         "answer; raise it if your character drifts.",
          nullptr, &s.stick_deadzone, nullptr, 0, 50},
         {"input", "trigger_threshold", Type::Int, "Trigger sensitivity",
          "How far the triggers must be pulled to count as pressed, in % of their travel. 0 leaves it to the game, as "
