@@ -163,6 +163,7 @@ X86_FUNC(sub_000EECD0) {
 // GUI::TManager::LaunchMap(char*): the menus starting a level. A new game begins the first chapter here.
 X86_EXTERN_FUNC(__imp__sub_001EC330);
 X86_FUNC(sub_001EC330) {
+    kernel::W32(ctx.esp + 4, extras::LaunchMap(ctx, kernel::R32(ctx.esp + 4)));  // Level Select's pick, in place of the first level
     const std::string map = kernel::ReadCString(kernel::R32(ctx.esp + 4), 80);
     LOGI("achievements: launching %s", map.c_str());
     if (map.size() >= 20 && (map[0] == 'M' || map[0] == 'm') && map.substr(1, 2) == "00" && map.back() == '1') BeginChapter(1);

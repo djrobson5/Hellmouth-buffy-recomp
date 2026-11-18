@@ -47,4 +47,15 @@ inline std::vector<std::string> VisitedMaps(const uint8_t* data, size_t size) {
     return maps;
 }
 
+// The levels Level Select lists, as indexes into the table, in the table's order: the story's levels (not the specials) that
+// have been reached. The first level is always there.
+inline std::vector<size_t> Reachable(const std::vector<Entry>& table, const std::function<bool(const std::string&)>& reached) {
+    std::vector<size_t> list;
+    for (size_t i = 0; i < table.size(); i++) {
+        if (table[i].special) continue;
+        if (list.empty() || reached(Lower(table[i].map))) list.push_back(i);
+    }
+    return list;
+}
+
 }  // namespace levels

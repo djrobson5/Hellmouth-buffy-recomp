@@ -1,9 +1,10 @@
-// Extras, the front end's TMenuCredits (menu 0x0B), drawn by the game's own menu code: Arena 1 to 4 are always listed, and
-// four Hard versions are added (see docs/xdk-4432.md, "Extras"). The new entries are
+// Extras, the front end's TMenuCredits (menu 0x0B), drawn by the game's own menu code: Arena 1 to 4 are always listed,
+// four Hard versions are added, and a Level Select entry (see docs/xdk-4432.md, "Extras"). The new entries are
 // TTextButtons built the way the menu file builds them: a record in the game's binary menu format is put in guest memory,
 // the menu's stream is pointed at it, and the game's own constructor, PersistRead and AddControl do the rest, so the
 // buttons look and navigate like the stock ones.
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -26,8 +27,13 @@ constexpr uint32_t kCreditsVtable = 0x68CCC4;      // GUI::TMenuCredits
 constexpr uint32_t kCtrlDefs = 0x7E6B90;           // GUI::g_lpCtrlDef: the control classes, by name
 constexpr uint32_t kOperatorNew = 0x2BC1A0;        // the game's operator new
 constexpr uint32_t kGetMapSequencer = 0x936B0;     // TGO::Interface_GetMapSequencer: the mission list
+constexpr uint32_t kGetManager = 0x1EB7E0;         // GUI::GetManager
+constexpr uint32_t kGetBuffyManager = 0x217F30;    // GUI::GetBuffyManager
+constexpr uint32_t kSessionManager = 0x7F1924;     // TSessionManager::s_pInstance
+constexpr uint32_t kFadeMode = 0x7F041C;           // GUI::TBuffyMenu::s_fadeMode
 constexpr uint32_t kIdArena1 = 0x101;              // IDC_CREDITS_ARENA_1 .. 4
 constexpr uint32_t kIdHard1 = 0x105;               // the new Arena (Hard) buttons, 0x105 .. 0x108
+constexpr uint32_t kIdLevelSelect = 0x82;          // the new Level Select button
 constexpr uint32_t kRunOptionsCheats = 0x34;       // TScriptRunOptions: the cheats console variable, a bit mask
 constexpr uint32_t kCheatHard = 0x08;              // cheat 3: arenas load their "d" versions
 
@@ -153,8 +159,8 @@ uint32_t AddButton(X86Context& ctx, uint32_t menu, uint32_t stream, const Record
 }
 
 // Where each entry sits: one column, in the order Up and Down walk it. The menu draws every entry (the unfocused ones as
-// lines, which the headless reference renderer leaves out), so ten need closer spacing than the file's six, whose own
-// places run from 119 to 360 with 43 between the arenas. These run from 96 to 384, 32 apart, at the file's x.
+// lines, which the headless reference renderer leaves out), so eleven need closer spacing than the file's six, whose own
+// places run from 119 to 360 with 43 between the arenas. These run from 96 to 416, 32 apart, at the file's x.
 struct Slot {
     uint32_t id;
     int x, y;
@@ -163,18 +169,36 @@ constexpr int kTop = 96, kStep = 32;
 constexpr Slot kLayout[] = {
     {0x80, 110, kTop + 0 * kStep},  // Buffy History 101
     {0x81, 111, kTop + 1 * kStep},  // Credits
-    {kIdArena1 + 0, 113, kTop + 2 * kStep}, {kIdArena1 + 1, 113, kTop + 3 * kStep},
-    {kIdArena1 + 2, 113, kTop + 4 * kStep}, {kIdArena1 + 3, 113, kTop + 5 * kStep},
-    {kIdHard1 + 0, 113, kTop + 6 * kStep},  {kIdHard1 + 1, 113, kTop + 7 * kStep},
-    {kIdHard1 + 2, 113, kTop + 8 * kStep},  {kIdHard1 + 3, 113, kTop + 9 * kStep},
+    {kIdLevelSelect, 113, kTop + 2 * kStep},
+    {kIdArena1 + 0, 113, kTop + 3 * kStep}, {kIdArena1 + 1, 113, kTop + 4 * kStep},
+    {kIdArena1 + 2, 113, kTop + 5 * kStep}, {kIdArena1 + 3, 113, kTop + 6 * kStep},
+    {kIdHard1 + 0, 113, kTop + 7 * kStep},  {kIdHard1 + 1, 113, kTop + 8 * kStep},
+    {kIdHard1 + 2, 113, kTop + 9 * kStep},  {kIdHard1 + 3, 113, kTop + 10 * kStep},
 };
 
+// the menu's controls are a linked list (the list at +0x2C, its first node at +0x30; a node is the control, the next
+// node and the previous one), and Up and Down walk it
+void MoveAfter(uint32_t menu, uint32_t ctrl, uint32_t after) {
+    std::vector<uint32_t> nodes;
+    for (uint32_t n = kernel::R32(menu + 0x30); n; n = kernel::R32(n + 4)) nodes.push_back(n);
+    std::vector<uint32_t> ctrls;
+    for (uint32_t n : nodes) ctrls.push_back(kernel::R32(n));
+    auto from = std::find(ctrls.begin(), ctrls.end(), ctrl);
+    auto to = std::find(ctrls.begin(), ctrls.end(), after);
+    if (from == ctrls.end() || to == ctrls.end()) return;
+    ctrls.erase(from);
+    to = std::find(ctrls.begin(), ctrls.end(), after);
+    ctrls.insert(to + 1, ctrl);
+    for (size_t i = 0; i < nodes.size(); i++) kernel::W32(nodes[i], ctrls[i]);
+}
 
 void ExtendMenu(X86Context& ctx, uint32_t menu, uint32_t stream) {
     const uint32_t size = kernel::R32(stream + 4), start = kernel::R32(stream + 8), pos = kernel::R32(stream + 0xC);
     auto find = [&](uint32_t id) { return Virt(ctx, menu, kMenuFindControl, {id}); };
 
     uint32_t tab = 11;
+    const uint32_t level =
+        AddButton(ctx, menu, stream, TextButton("IDC_CREDITS_LEVEL_SELECT", kIdLevelSelect, tab++, 0, 0, 90), "Level Select");
     for (uint32_t i = 0; i < 4; i++) {
         const std::string name = "IDC_CREDITS_ARENA_" + std::to_string(i + 1) + "_HARD";
         const std::string text = "Arena " + std::to_string(i + 1) + " (Hard)";
@@ -184,13 +208,16 @@ void ExtendMenu(X86Context& ctx, uint32_t menu, uint32_t stream) {
     kernel::W32(stream + 8, start);
     kernel::W32(stream + 0xC, pos);
 
+    // Level Select comes before the arenas in the order Up and Down walk
+    const uint32_t credits = find(0x81);
+    if (level && credits) MoveAfter(menu, level, credits);
 
     for (const Slot& s : kLayout)
         if (const uint32_t c = find(s.id)) Virt(ctx, c, kCtrlSetOffset, {uint32_t(s.x), uint32_t(s.y)});
     // the file hides the arenas until a cheat code unlocks them
     for (uint32_t i = 0; i < 4; i++)
         if (const uint32_t c = find(kIdArena1 + i)) Virt(ctx, c, kCtrlSetState, {0});
-    LOGI("extras: the Extras menu has the Hard arenas");
+    LOGI("extras: the Extras menu has Level Select and the Hard arenas");
 }
 
 // ---- the levels
@@ -243,6 +270,190 @@ void EnsureSeeded() {
     ach::Add("reached_seeded", 1);
 }
 
+// ---- Level Select
+// Extras opens the front end's Load Game menu (TMenuLoadSession, id 5) in a mode that skips its list of saved games and goes
+// straight to its list of checkpoints, filled with the levels reached, earliest first. A pick goes on through the game's own
+// New Game flow, the Start Game confirmation (menu 12) and then the difficulty (menu 13), and LaunchMap swaps the new game's
+// first level for the one picked. The mode is on from Extras opening menu 5 until any change to a menu other than 5, 12 and 13.
+constexpr uint32_t kMenuLoadSession = 5, kMenuStartGame = 12, kMenuDifficulty = 13;
+constexpr uint32_t kTitleControl = 0x2C, kHeadingControl = 0x2E, kCaptionControl = 0xFC;  // "Load Game", "Checkpoint", "Select Checkpoint"
+constexpr uint32_t kCheckpointList = 0x46, kSessionList = 0x44, kSessionBar = 0x45, kCheckpointBar = 0x47;
+constexpr uint32_t kSessionLabel = 0xFB, kDeleteIcons[2] = {0xF1, 0xF2};
+constexpr uint32_t kImageLoadGame = 54, kImageExtras = 53;  // the pictures of the two titles, as the menu file names them
+constexpr uint32_t kCommandA = 0x27, kCommandB = 0x29, kCommandX = 0x28, kCommandLeft = 0x23, kCommandRight = 0x24;
+
+// virtual slots
+constexpr uint32_t kManagerSetMenu = 0x38, kManagerGetResource = 0x4C;
+constexpr uint32_t kMenuGotoControl = 0x70;
+constexpr uint32_t kListGetCurSel = 0x88, kListAddString = 0x8C, kListReset = 0x98;
+constexpr uint32_t kTextGetText = 0x70;
+constexpr uint32_t kDialogShow = 0x2D0;
+
+struct {
+    bool armed = false;               // Extras has asked for menu 5
+    bool active = false;              // menu 5 and what follows it are Level Select's
+    std::vector<size_t> list;         // the table's indexes, in the order the list shows them
+    uint32_t array = 0;               // the table's array in guest memory, 0x2C bytes to an entry
+    std::string pending;              // the map picked, as the table spells it
+    bool title_swapped = false;       // the menu's title and captions are ours
+    std::string stock_heading, stock_caption;
+} g_ls;
+
+uint32_t This(X86Context& ctx, uint32_t fn, uint32_t self, std::initializer_list<uint32_t> args) {
+    const uint32_t saved = ctx.ecx;
+    ctx.ecx = self;
+    const uint32_t r = kernel::CallGuest(ctx, fn, args);
+    ctx.ecx = saved;
+    return r;
+}
+
+uint32_t Manager(X86Context& ctx) { return kernel::CallGuest(ctx, kGetManager, {}); }
+
+void SetMenu(X86Context& ctx, uint32_t id, bool back) { Virt(ctx, Manager(ctx), kManagerSetMenu, {id, back ? 1u : 0u}); }
+
+// TSound::Play on one of the Buffy manager's sounds: the game's own click (0x198), refusal (0x2B8) and so on
+void PlaySound(X86Context& ctx, uint32_t which) {
+    const uint32_t buffy = kernel::CallGuest(ctx, kGetBuffyManager, {});
+    This(ctx, 0xB65A0, buffy + which, {1, 1, 0x42C80000, 0x3F800000, 0});
+}
+
+// A dialog the menu shows over itself, closed by A (the menu's flag at +0x4B, which its OnCommand checks first)
+void ShowDialog(X86Context& ctx, uint32_t menu, const std::string& text) {
+    const uint32_t s = ScratchString(ctx, text);
+    if (!s) return;
+    const uint32_t buffy = kernel::CallGuest(ctx, kGetBuffyManager, {});
+    *static_cast<uint8_t*>(kernel::HostPtr(menu + 0x4B)) = 1;
+    PlaySound(ctx, 0x2B8);
+    Virt(ctx, kernel::R32(buffy + 0x70), kDialogShow, {s, 0, 0, 1, 1, 0});
+}
+
+// The checks the main menu's Start Game button makes before it goes to the confirmation (TMenuMain::OnMessage): the space
+// on the disk is always 50,000 blocks or more here, so only the two about how many saved games there are matter. The game's
+// own words come back, or "" when a new game can start.
+std::string NewGameBlocked(X86Context& ctx) {
+    const uint32_t sm = kernel::R32(kSessionManager);
+    if (!(This(ctx, 0x237AA0, sm, {}) & 0xFF)) return kernel::ReadCString(0x68D778, 200);  // TSessionManager::QueryForAvailableSession
+    const uint32_t sp = ctx.esp;
+    ctx.esp -= 64;
+    const uint32_t array = ctx.esp;
+    std::memset(kernel::HostPtr(array), 0, 32);
+    This(ctx, 0x238660, sm, {array, 0});  // TSessionManager::QuerySessions
+    const uint32_t count = kernel::R32(array + 4);
+    This(ctx, 0x64D90, array, {});        // the array's destructor
+    ctx.esp = sp;
+    if (count < 10) return {};
+    char text[256];
+    std::snprintf(text, sizeof text, "%s", kernel::ReadCString(0x68D6E8, 200).c_str());
+    const std::string format = text;
+    std::snprintf(text, sizeof text, format.c_str(), 10);  // "... only allows %i saved games ..."
+    return text;
+}
+
+void SetImage(X86Context& ctx, uint32_t control, uint32_t image) {
+    const uint32_t resource = Virt(ctx, kernel::R32(0x7E6BD0), kManagerGetResource, {1, image});  // GUI::g_lpManager
+    if (control && resource) kernel::W32(control + 0x28, resource);
+}
+
+void SetText(X86Context& ctx, uint32_t control, const std::string& text) {
+    if (const uint32_t s = ScratchString(ctx, text)) Virt(ctx, control, kButtonSetText, {s});
+}
+
+// After TMenuLoadSession::OnLoad has listed the saved games: in Level Select, the checkpoint list as the stock menu shows it
+// once a game is chosen (the replay of TMenuLoadSession::OnCommand's switch at 0x221744), with the reached levels in it.
+void ShowLevelSelect(X86Context& ctx, uint32_t menu) {
+    auto find = [&](uint32_t id) { return Virt(ctx, menu, kMenuFindControl, {id}); };
+    const uint32_t title = find(kTitleControl), heading = find(kHeadingControl), caption = find(kCaptionControl);
+    if (!g_ls.title_swapped && g_ls.active) {
+        g_ls.stock_heading = kernel::ReadCString(Virt(ctx, heading, kTextGetText, {}), 80);
+        g_ls.stock_caption = kernel::ReadCString(Virt(ctx, caption, kTextGetText, {}), 80);
+    }
+    if (!g_ls.active) {
+        if (g_ls.title_swapped) {
+            SetImage(ctx, title, kImageLoadGame);
+            SetText(ctx, heading, g_ls.stock_heading);
+            SetText(ctx, caption, g_ls.stock_caption);
+            // Level Select hid the list of saved games' scroll bar, which the stock OnLoad doesn't show again (the list itself
+            // comes back as it takes the focus)
+            Virt(ctx, find(kSessionBar), kCtrlSetState, {0});
+            g_ls.title_swapped = false;
+        }
+        return;
+    }
+    SetImage(ctx, title, kImageExtras);
+    SetText(ctx, heading, "Level");
+    SetText(ctx, caption, "Select Level");
+    g_ls.title_swapped = true;
+
+    const std::vector<levels::Entry> table = Table(ctx);
+    const uint32_t seq = kernel::CallGuest(ctx, kGetMapSequencer, {});
+    g_ls.array = seq ? kernel::R32(seq + 8) : 0;
+    if (!g_ls.array || table.empty()) {
+        LOGW("extras: Level Select found no mission list");
+        g_ls.list.clear();
+        return;
+    }
+    SeedFromSaves();
+    g_ls.list = levels::Reachable(table, [](const std::string& map) { return ach::Count(ReachedKey(map).c_str()) > 0; });
+    const uint32_t list = find(kCheckpointList);
+    Virt(ctx, list, kListReset, {});
+    for (size_t index : g_ls.list) Virt(ctx, list, kListAddString, {kernel::R32(g_ls.array + uint32_t(index) * 0x2C + 0x10)});
+    kernel::W32(menu + 0x58, 0xFFFFFFFF);  // the thumbnail follows the selection from scratch
+
+    Virt(ctx, find(kSessionLabel), kCtrlSetState, {3});
+    Virt(ctx, caption, kCtrlSetState, {0});
+    Virt(ctx, list, kCtrlSetState, {0});
+    Virt(ctx, find(kCheckpointBar), kCtrlSetState, {0});
+    Virt(ctx, menu, kMenuGotoControl, {kCheckpointList});
+    Virt(ctx, find(kSessionList), kCtrlSetState, {3});
+    Virt(ctx, find(kSessionBar), kCtrlSetState, {3});
+    for (uint32_t id : kDeleteIcons) Virt(ctx, find(id), kCtrlSetState, {3});
+    LOGI("extras: Level Select lists %zu of %zu levels", g_ls.list.size(), table.size());
+}
+
+// TMenuLoadSession::OnCommand in Level Select: A picks the level, B goes back to Extras, and the delete command, which would
+// delete saved games, does nothing. True when the command is dealt with here.
+bool LevelSelectCommand(X86Context& ctx, uint32_t menu, uint32_t command) {
+    // the stock menu is busy: fading, launching, deleting or showing a dialog, which A closes. It deals with those itself.
+    if (kernel::R32(kFadeMode) || R8(menu + 0x4E) || R8(menu + 0x4C) || R8(menu + 0x4B)) return false;
+    switch (command) {
+    case kCommandA: {
+        const int index = int(Virt(ctx, kernel::R32(menu + 0x70), kListGetCurSel, {}));
+        if (index < 0 || size_t(index) >= g_ls.list.size()) return true;
+        This(ctx, 0x218C20, menu, {command});  // TBuffyMenu::OnBuffyCommand
+        g_ls.pending = kernel::ReadCString(kernel::R32(g_ls.array + uint32_t(g_ls.list[size_t(index)]) * 0x2C), 80);
+        const std::string blocked = NewGameBlocked(ctx);
+        if (!blocked.empty()) {
+            LOGI("extras: Level Select can't start a game: %s", blocked.c_str());
+            g_ls.pending.clear();
+            ShowDialog(ctx, menu, blocked);
+            return true;
+        }
+        LOGI("extras: Level Select picked %s", g_ls.pending.c_str());
+        This(ctx, 0x218C60, menu, {command});  // TBuffyMenu::OnCommandSounds
+        SetMenu(ctx, kMenuStartGame, true);
+        return true;
+    }
+    case kCommandB:
+        This(ctx, 0x218C20, menu, {command});
+        if (const uint32_t back = kernel::R32(menu + 0x40)) {
+            PlaySound(ctx, 0x198);
+            SetMenu(ctx, back, false);
+        }
+        return true;
+    case kCommandX:
+    case kCommandLeft:
+    case kCommandRight:
+        return true;
+    default:
+        return false;
+    }
+}
+
+void OpenLevelSelect(X86Context& ctx) {
+    g_ls.armed = true;
+    LOGI("extras: Level Select opens");
+    SetMenu(ctx, kMenuLoadSession, true);
+}
 
 }  // namespace
 
@@ -272,6 +483,11 @@ X86_FUNC(sub_0021D890) {
             kernel::W32(cheats, (kernel::R32(cheats) & ~kCheatHard) | (before & kCheatHard));
             return;
         }
+        if (id == kIdLevelSelect) {
+            OpenLevelSelect(ctx);
+            ctx.esp += 4 + 16;  // the return address and the four arguments this stands in for
+            return;
+        }
     }
     __imp__sub_0021D890(ctx, base);
 }
@@ -285,13 +501,40 @@ X86_FUNC(sub_00095360) {
 }
 
 // GUI::TManager::SetMenu(id, bool back): the front end changing menus. TBuffyManager::SetMenu fades and ends up here.
+// Level Select is on from Extras opening menu 5, and off at any change to a menu other than 5, 12 and 13.
 X86_EXTERN_FUNC(__imp__sub_001EBE00);
 X86_FUNC(sub_001EBE00) {
     const uint32_t id = kernel::R32(ctx.esp + 4);
     LOGI("extras: menu %u (back %u)", id, kernel::R32(ctx.esp + 8) & 0xFF);
+    if (id == kMenuLoadSession) {
+        g_ls.active = g_ls.armed || g_ls.active;
+        g_ls.armed = false;
+    } else if (id != kMenuStartGame && id != kMenuDifficulty) {
+        if (g_ls.active) LOGI("extras: Level Select ends");
+        g_ls.armed = g_ls.active = false;
+        g_ls.pending.clear();
+    }
     __imp__sub_001EBE00(ctx, base);
 }
 
+// GUI::TMenuLoadSession::OnLoad
+X86_EXTERN_FUNC(__imp__sub_00220F10);
+X86_FUNC(sub_00220F10) {
+    const uint32_t menu = ctx.ecx;
+    __imp__sub_00220F10(ctx, base);
+    ShowLevelSelect(ctx, menu);
+}
+
+// GUI::TMenuLoadSession::OnCommand(command)
+X86_EXTERN_FUNC(__imp__sub_00221380);
+X86_FUNC(sub_00221380) {
+    const uint32_t menu = ctx.ecx, command = kernel::R32(ctx.esp + 4);
+    if (g_ls.active && R8(menu + 0x48) && LevelSelectCommand(ctx, menu, command)) {
+        ctx.esp += 8;  // the return address and the command
+        return;
+    }
+    __imp__sub_00221380(ctx, base);
+}
 
 // ---- the interface the rest of the port uses (extras.h)
 std::string extras::CurrentMap() {
@@ -311,4 +554,23 @@ void extras::LevelStarted(X86Context& ctx) {
     if (story) NoteReached(map);
     LOGI("extras: level %s begins (%s), cheats %#x", map.c_str(), story ? "reached" : "not a story level",
          ro ? kernel::R32(ro + kRunOptionsCheats) : 0);
+}
+
+// The new game begins at the first level of the mission list. In Level Select the name goes in, in memory the game's own
+// operator new gave: its callers keep their strings, and the game frees none of this.
+uint32_t extras::LaunchMap(X86Context& ctx, uint32_t name) {
+    if (!g_ls.active || g_ls.pending.empty()) return name;
+    const std::vector<levels::Entry> table = Table(ctx);
+    const std::string launching = kernel::ReadCString(name, 80);
+    if (table.empty() || levels::Lower(table[0].map) != levels::Lower(launching)) {
+        LOGW("extras: Level Select picked %s, but the menu is launching %s", g_ls.pending.c_str(), launching.c_str());
+        return name;
+    }
+    const uint32_t s = GuestNew(ctx, uint32_t(g_ls.pending.size() + 1));
+    if (!s) return name;
+    std::memcpy(kernel::HostPtr(s), g_ls.pending.c_str(), g_ls.pending.size() + 1);
+    LOGI("extras: the new game starts at %s instead of %s", g_ls.pending.c_str(), launching.c_str());
+    g_ls.pending.clear();
+    g_ls.active = false;
+    return s;
 }
