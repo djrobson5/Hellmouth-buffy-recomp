@@ -4,7 +4,7 @@
 
 Hellmouth is a static recompilation, not an emulator. The game's x86 code is translated to C++ ahead of time and built into
 a Mac program, and the Xbox kernel and libraries are implemented on the Mac. It also adds something the original never had:
-25 achievements, built into the game.
+28 achievements, built into the game.
 
 > **No game files are included,** and no code generated from them. The installer builds the app on your Mac from your own
 > copy of the disc. A built copy contains the recompiled game, so there's no ready-made app to download, and please don't
@@ -95,7 +95,7 @@ and the restart looks for that name beside the running executable. The window cl
 
 ## Achievements
 
-The original game has no achievements, so Hellmouth adds 25: one for each boss, plus kills, secrets, finishing the game on
+The original game has no achievements, so Hellmouth adds 28: one for each boss, plus kills (three of them with particular weapons), secrets, finishing the game on
 Hard, and a few jokes. They are part of the game and need nothing else installed.
 
 - **When you earn one,** a note appears in the bottom right corner for six seconds, with a picture cut from your own disc.

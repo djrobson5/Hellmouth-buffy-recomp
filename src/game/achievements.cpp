@@ -118,12 +118,49 @@ void SecretFound(X86Context& ctx) {
     if (all >= kAllSecrets) ach::Unlock("secret_all");
 }
 
+// ---- the weapon Buffy holds when a kill is credited to her. ICharacter::Inventory (vtable +0x31C, not overridden) is
+// [this+0xDF4]; TCharacterInventory::HeldItem (0x129170, thiscall) gives the item, 0 for none. A weapon's class is its
+// vtable. IShovel is every two-handed pole: shovel, rake, bat, axe, sledge hammer, oar, brooms, mop.
+constexpr uint32_t kHeldItem = 0x129170;
+struct WeaponClass {
+    uint32_t vtable;
+    const char* name;
+};
+constexpr WeaponClass kWeapons[] = {
+    {0x670EAC, "pole"},  {0x6671FC, "crossbow"}, {0x672E74, "soaker"}, {0x671B0C, "stake"},
+    {0x673C74, "torch"}, {0x66FC2C, "reaper"},   {0x672124, "femur"},  {0x6714E4, "spear"},
+};
+
+const char* HeldWeapon(X86Context& ctx, uint32_t slayer) {
+    const uint32_t inventory = kernel::R32(slayer + 0xDF4);
+    if (!inventory) return "none";
+    ctx.ecx = inventory;
+    const uint32_t item = kernel::CallGuest(ctx, kHeldItem, {});
+    if (!item) return "none";
+    const uint32_t vtable = kernel::R32(item);
+    for (const WeaponClass& w : kWeapons)
+        if (w.vtable == vtable) return w.name;
+    LOGI("achievements: kill with an item of vtable %08X", vtable);
+    return "other";
+}
+
+void WeaponKill(X86Context& ctx, uint32_t slayer) {
+    const std::string weapon = HeldWeapon(ctx, slayer);
+    LOGI("achievements: kill with %s", weapon.c_str());
+    if ((weapon == "pole" || weapon == "spear") && ach::Add("kills_pole", 1) >= 20) ach::Unlock("kills_pole_20");
+    if (weapon == "soaker") ach::Unlock("kill_soaker");
+    if (weapon == "crossbow" && ach::Add("kills_crossbow", 1) >= 5) ach::Unlock("kills_crossbow_5");
+}
+
 }  // namespace
 
-// ISlayer::Event_KilledEnemy(ICharacter*): only kills credited to Buffy
+// ISlayer::Event_KilledEnemy(ICharacter*): only kills credited to Buffy. The weapon is read after the original, which only
+// sets two fields, so the guest call doesn't disturb its registers.
 X86_EXTERN_FUNC(__imp__sub_0020E1F0);
 X86_FUNC(sub_0020E1F0) {
-    if (IsPlayer(ctx.ecx)) {
+    const uint32_t slayer = ctx.ecx;
+    const bool player = IsPlayer(slayer);
+    if (player) {
         const uint64_t kills = ach::Add("kills", 1);
         ach::Unlock("kills_1");
         if (kills >= 100) ach::Unlock("kills_100");
@@ -131,6 +168,7 @@ X86_FUNC(sub_0020E1F0) {
         if (kills >= 500) ach::Unlock("kills_500");
     }
     __imp__sub_0020E1F0(ctx, base);
+    if (player) WeaponKill(ctx, slayer);
 }
 
 // ICharacterBtvS::DieAsPlayer

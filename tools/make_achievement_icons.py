@@ -40,6 +40,9 @@ PICKS = {
     "kills_100": ("m03_cemetery_1", 100, 70, 100),
     "kills_250": ("m10_sunken-church_1", 80, 70, 90),
     "kills_500": (LAUNCH, 450, 140, 220),  # Buffy under the moon
+    "kills_pole_20": ("m07_docks_3", 88, 64, 100),
+    "kill_soaker": ("m05_sunken_2", 88, 64, 100),
+    "kills_crossbow_5": ("m02_bronze_1", 88, 64, 100),
     "secret_1": ("hub01", 90, 60, 100),
     "secret_level": ("m04_mausoleum_2", 88, 60, 100),
     "secret_30": ("m04_mausoleum_1", 85, 55, 100),
