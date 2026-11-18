@@ -37,6 +37,8 @@ Not proven yet:
 - **Later levels:** everything past `m00_spanishmission_2` has only been loaded in tests, not played.
 - **Achievements:** each one's code has been exercised by scripted play or test drivers, or shares a code path with one that
   has, but none has been earned in a real playthrough. `docs/xdk-4432.md` says how each was tested.
+- **Extras:** Level Select and the Hard arenas have been driven through their menus in the headless harness (see "Extras"), not played
+  by hand, and the achievement rule for Level Select games has been seen working only on the records of a save.
 - **Other Macs:** it has been tested on one machine, an M5 Pro with 64 GB of memory on macOS 27.0.1.
 - **Windows:** the SDK underneath also targets Windows, but this port's changes haven't been compiled there.
 
@@ -103,11 +105,27 @@ Hard, and a few jokes. They are part of the game and need nothing else installed
   time you earned each one.
 - **Your progress** is a plain text file, `~/Library/Application Support/Buffy/logs/achievements.txt` for the app, or
   `achievements.txt` beside the executable when it's run on its own.
-- **The rules:** cheats don't disqualify you, existing saves earn nothing, and only kills credited to Buffy count.
+- **The rules:** cheats don't disqualify you, existing saves earn nothing, and only kills credited to Buffy count. Games begun at a
+  later level with Level Select have a rule of their own: see Extras.
 
 No picture is shown before it's earned, as some show a boss. To use a different picture, edit `PICKS` in
 `tools/make_achievement_icons.py` and run it on your disc, then build and bundle again. The list is in
 `src/common/game_info.cpp`, and what earns each one is in `src/game/achievements.cpp`.
+
+## Extras
+
+Hellmouth adds three things to the game's own Extras menu, in the game's own style:
+
+- **Arenas.** Arena 1 to 4, which the original game kept hidden until a cheat code, are always listed, and Arena 1 (Hard) to
+  Arena 4 (Hard) start the harder versions. The original cheat codes still work.
+- **Level Select.** The levels you have reached, in the game's order, with the game's own pictures of them. A level counts as
+  reached once you've begun it in this version, or once any saved game you already had reached it. Choosing one goes through the game's New Game
+  screens (the Start Game confirmation, then the difficulty) and starts a new saved game at that level. Your other saves are left
+  alone, and the new one counts towards the game's limit of ten.
+- **Achievements in a Level Select game.** Bosses, kills and secrets count as they do in any game. Finishing the game and finishing it
+  on Hard need a game that went through every chapter from the first level, and "Not Today" needs its chapter played from the
+  start, in that game. A save of a Level Select game is held to the same rule when it's loaded later. A Level Select game that
+  starts at the first level is a whole game, and earns them.
 
 ## Playing
 
@@ -184,7 +202,7 @@ other settings, including pad scripts.
 | `sdk/` | The recompiler and runtime, from Athelas (see Credits), with changes for this game: `docs/sdk-changes.md` |
 | `sdk/host/` | The macOS program: window, events and sound |
 | `sdk/xdk/4432/layout.toml` | This XDK's data layouts, each value with the instruction that proves it |
-| `src/` | The game's side of the port: the achievement list, the hooks, widescreen |
+| `src/` | The game's side of the port: the achievement list, the hooks, widescreen, the Extras additions |
 | `install.sh` | The installer: the steps under "Building it by hand", with checks |
 | `tools/` | `regen.sh`; `make_config.py` writes the recompiler's input; `disasm.py` disassembles by name; `coverage.py` reports what the game calls in the libraries |
 | `docs/xdk-4432.md` | How this game differs from what the SDK expected, and the evidence |
