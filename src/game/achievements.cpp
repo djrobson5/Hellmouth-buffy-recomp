@@ -6,6 +6,7 @@
 
 #include "app/app.h"
 #include "core/log.h"
+#include "game/extras.h"
 #include "kernel/kernel.h"
 #include "xdk/hle.h"
 
@@ -16,13 +17,7 @@ constexpr uint32_t kSlayerVtable = 0x67A0CC;  // ISlayer: IDarkSlayer has the sa
 constexpr uint32_t kHard = 3;              // TGameOptions +0x1C: 1 easy, 2 normal, 3 hard
 
 // lower case: the same map comes as M03_Cemetery_1 and m03_cemetery_1
-std::string CurrentMap() {
-    const uint32_t game = kernel::R32(kGame);
-    if (!game) return {};
-    std::string map = kernel::ReadCString(kernel::R32(kernel::R32(game + 0x40) + 0x40), 80);
-    std::transform(map.begin(), map.end(), map.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-    return map;
-}
+using extras::CurrentMap;
 
 bool IsPlayer(uint32_t character) { return kernel::R32(character) == kSlayerVtable; }
 

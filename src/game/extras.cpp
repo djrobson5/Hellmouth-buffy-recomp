@@ -5,11 +5,17 @@
 // buttons look and navigate like the stock ones.
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <initializer_list>
+#include <iterator>
 #include <string>
 #include <vector>
 
+#include "app/app.h"
 #include "core/log.h"
+#include "game/extras.h"
+#include "game/levels.h"
 #include "kernel/kernel.h"
 #include "xdk/hle.h"
 
@@ -19,6 +25,7 @@ constexpr uint32_t kGame = 0x7D0090;               // TGame::gGame
 constexpr uint32_t kCreditsVtable = 0x68CCC4;      // GUI::TMenuCredits
 constexpr uint32_t kCtrlDefs = 0x7E6B90;           // GUI::g_lpCtrlDef: the control classes, by name
 constexpr uint32_t kOperatorNew = 0x2BC1A0;        // the game's operator new
+constexpr uint32_t kGetMapSequencer = 0x936B0;     // TGO::Interface_GetMapSequencer: the mission list
 constexpr uint32_t kIdArena1 = 0x101;              // IDC_CREDITS_ARENA_1 .. 4
 constexpr uint32_t kIdHard1 = 0x105;               // the new Arena (Hard) buttons, 0x105 .. 0x108
 constexpr uint32_t kRunOptionsCheats = 0x34;       // TScriptRunOptions: the cheats console variable, a bit mask
@@ -186,6 +193,55 @@ void ExtendMenu(X86Context& ctx, uint32_t menu, uint32_t stream) {
     LOGI("extras: the Extras menu has the Hard arenas");
 }
 
+// ---- the levels
+// The mission list as TMapSequencer holds it: the count at +4, the array at +8, and 0x2C bytes to an entry: the map's name
+// (a TString, whose first field is the text) at +0, the level's name for the menus at +0x10, the special flag at +0x28.
+std::vector<levels::Entry> Table(X86Context& ctx) {
+    std::vector<levels::Entry> table;
+    const uint32_t seq = kernel::CallGuest(ctx, kGetMapSequencer, {});
+    if (!seq) return table;
+    const uint32_t count = kernel::R32(seq + 4), array = kernel::R32(seq + 8);
+    for (uint32_t i = 0; i < count && array; i++) {
+        const uint32_t e = array + i * 0x2C;
+        table.push_back({kernel::ReadCString(kernel::R32(e), 64), R8(e + 0x28) != 0});
+    }
+    return table;
+}
+
+std::string ReachedKey(const std::string& lower_map) { return "reached@" + lower_map; }
+
+void NoteReached(const std::string& lower_map) {
+    const std::string key = ReachedKey(lower_map);
+    if (!ach::Count(key.c_str())) ach::Add(key.c_str(), 1);
+}
+
+// The levels the player's saves have reached, from the saves themselves: every record of a session file marked visited. Done
+// each time Level Select opens, so a save copied in later counts too.
+void SeedFromSaves() {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path udata = app::SavesDir() / "E" / "UDATA" / "45410012";
+    if (!fs::is_directory(udata, ec)) return;
+    size_t files = 0, found = 0;
+    for (fs::recursive_directory_iterator it(udata, ec), end; !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec) || it->path().extension() != ".ses") continue;
+        std::ifstream f(it->path(), std::ios::binary);
+        std::vector<uint8_t> data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        files++;
+        for (const std::string& map : levels::VisitedMaps(data.data(), data.size())) {
+            if (!ach::Count(ReachedKey(map).c_str())) found++;
+            NoteReached(map);
+        }
+    }
+    LOGI("extras: %zu saved games read, %zu levels newly reached", files, found);
+}
+
+// once, the first time a level begins with this code: the saves made before it, whose levels nothing else recorded
+void EnsureSeeded() {
+    if (ach::Count("reached_seeded")) return;
+    SeedFromSaves();
+    ach::Add("reached_seeded", 1);
+}
 
 
 }  // namespace
@@ -234,4 +290,25 @@ X86_FUNC(sub_001EBE00) {
     const uint32_t id = kernel::R32(ctx.esp + 4);
     LOGI("extras: menu %u (back %u)", id, kernel::R32(ctx.esp + 8) & 0xFF);
     __imp__sub_001EBE00(ctx, base);
+}
+
+
+// ---- the interface the rest of the port uses (extras.h)
+std::string extras::CurrentMap() {
+    const uint32_t game = kernel::R32(kGame);
+    if (!game) return {};
+    return levels::Lower(kernel::ReadCString(kernel::R32(kernel::R32(game + 0x40) + 0x40), 80));
+}
+
+void extras::LevelStarted(X86Context& ctx) {
+    const std::string map = CurrentMap();
+    if (map.empty()) return;
+    EnsureSeeded();
+    const uint32_t ro = RunOptions();
+    bool story = false;
+    for (const levels::Entry& e : Table(ctx))
+        if (!e.special && levels::Lower(e.map) == map) story = true;
+    if (story) NoteReached(map);
+    LOGI("extras: level %s begins (%s), cheats %#x", map.c_str(), story ? "reached" : "not a story level",
+         ro ? kernel::R32(ro + kRunOptionsCheats) : 0);
 }
