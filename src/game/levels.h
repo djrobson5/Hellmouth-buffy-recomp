@@ -58,4 +58,34 @@ inline std::vector<size_t> Reachable(const std::vector<Entry>& table, const std:
     return list;
 }
 
+// Chapters run between the Library's gang meetings (the HUBnn entries). A hub opens the chapter after it, so chapter 1 is
+// everything before HUB01, chapter 2 is HUB01 up to HUB02, and so on.
+inline bool IsHub(const Entry& e) { return Lower(e.map).rfind("hub", 0) == 0; }
+
+inline int Chapter(const std::vector<Entry>& table, size_t index) {
+    int chapter = 1;
+    for (size_t i = 0; i <= index && i < table.size(); i++)
+        if (!table[i].special && IsHub(table[i])) chapter++;
+    return chapter;
+}
+
+// The table entry a chapter is entered through: the hub before it, or for chapter 1 the story's second level (the first
+// one's record is there from the start, so it can't show the session was played from the beginning). table.size() when
+// there's no such entry, which no session has a record of, so a check on it fails.
+inline size_t ChapterGate(const std::vector<Entry>& table, int chapter) {
+    if (chapter <= 1) return table.size() > 1 ? 1 : table.size();
+    int hubs = 0;
+    for (size_t i = 0; i < table.size(); i++)
+        if (!table[i].special && IsHub(table[i]) && ++hubs == chapter - 1) return i;
+    return table.size();
+}
+
+// The number of chapters: one more than the hubs
+inline int Chapters(const std::vector<Entry>& table) {
+    int hubs = 0;
+    for (const Entry& e : table)
+        if (!e.special && IsHub(e)) hubs++;
+    return hubs + 1;
+}
+
 }  // namespace levels

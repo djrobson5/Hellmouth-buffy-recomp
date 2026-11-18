@@ -574,3 +574,26 @@ uint32_t extras::LaunchMap(X86Context& ctx, uint32_t name) {
     g_ls.active = false;
     return s;
 }
+
+// The records of the session in memory (TSessionManager +0x0C, the header and records of a .ses file) say which levels it has
+// reached.
+bool extras::SessionPlayedChapter(X86Context& ctx, int chapter) {
+    const uint32_t sm = kernel::R32(kSessionManager);
+    const std::vector<levels::Entry> table = Table(ctx);
+    if (!sm || table.empty()) return false;
+    const std::vector<std::string> reached =
+        levels::VisitedMaps(static_cast<const uint8_t*>(kernel::HostPtr(sm + 0x0C)), levels::kSesHeader + levels::kSesSlots * levels::kSesRecord);
+    const size_t gate = levels::ChapterGate(table, chapter);
+    const bool played = gate < table.size() && std::find(reached.begin(), reached.end(), levels::Lower(table[gate].map)) != reached.end();
+    LOGI("extras: the session %s chapter %d from its start (its records: %zu, through %s)", played ? "played" : "didn't play", chapter,
+         reached.size(), gate < table.size() ? table[gate].map.c_str() : "?");
+    return played;
+}
+
+bool extras::SessionPlayedFromStart(X86Context& ctx) {
+    const std::vector<levels::Entry> table = Table(ctx);
+    if (table.empty()) return false;
+    for (int chapter = 1; chapter <= levels::Chapters(table); chapter++)
+        if (!SessionPlayedChapter(ctx, chapter)) return false;
+    return true;
+}

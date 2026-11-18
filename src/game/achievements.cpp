@@ -32,9 +32,11 @@ void BeginChapter(int chapter) {
     if (want > now) ach::Add(name.c_str(), want - now);
 }
 
-void EndChapter(int chapter) {
+// A session made by Level Select at a later level (or a save of one, loaded later) hasn't seen the chapters before it, so it
+// can't earn the chapter's deed: chapter_start@<n> may be left from an earlier game, with no death since.
+void EndChapter(X86Context& ctx, int chapter) {
     const std::string name = "chapter_start@" + std::to_string(chapter);
-    if (ach::Count(name.c_str()) == Deaths() + 1) ach::Unlock("chapter_deathless");
+    if (ach::Count(name.c_str()) == Deaths() + 1 && extras::SessionPlayedChapter(ctx, chapter)) ach::Unlock("chapter_deathless");
     BeginChapter(chapter + 1);
 }
 
@@ -67,13 +69,13 @@ constexpr LevelEnd kLevelEnds[] = {
 };
 
 // target: where IMapIndexer is going, null for IMapCompleted
-void LeftLevel(const std::string* target) {
+void LeftLevel(X86Context& ctx, const std::string* target) {
     const std::string map = CurrentMap();
     LOGI("achievements: left level %s for %s", map.c_str(), target ? target->c_str() : "the next level");
     for (const LevelEnd& end : kLevelEnds) {
         if (map != end.map || (target && *target != end.next)) continue;
         if (end.earns) ach::Unlock(end.earns);
-        if (end.ends_chapter) EndChapter(end.ends_chapter);
+        if (end.ends_chapter) EndChapter(ctx, end.ends_chapter);
     }
 }
 
@@ -144,7 +146,7 @@ X86_FUNC(sub_00206010) {
 // IMapCompleted::DoMapChange
 X86_EXTERN_FUNC(__imp__sub_000EEB50);
 X86_FUNC(sub_000EEB50) {
-    LeftLevel(nullptr);
+    LeftLevel(ctx, nullptr);
     __imp__sub_000EEB50(ctx, base);
 }
 
@@ -152,10 +154,10 @@ X86_FUNC(sub_000EEB50) {
 X86_EXTERN_FUNC(__imp__sub_000EECD0);
 X86_FUNC(sub_000EECD0) {
     if (kernel::R32(ctx.ecx + 0x290) == 0) {
-        LeftLevel(nullptr);
+        LeftLevel(ctx, nullptr);
     } else {
         const std::string target = IndexerTarget(ctx.ecx);
-        LeftLevel(&target);
+        LeftLevel(ctx, &target);
     }
     __imp__sub_000EECD0(ctx, base);
 }
@@ -173,9 +175,14 @@ X86_FUNC(sub_001EC330) {
 // TGBuffyInterface::ActivateEndCredits: the end of the game. Credits from the Extras menu don't come here.
 X86_EXTERN_FUNC(__imp__sub_0023EF50);
 X86_FUNC(sub_0023EF50) {
-    ach::Unlock("game_finished");
-    const uint32_t game = kernel::R32(kGame);
-    if (game && kernel::R32(kernel::R32(game + 0x20) + 0x1C) == kHard) ach::Unlock("game_hard");
+    // only a game played from its start finishes it: one begun at a later level with Level Select doesn't
+    if (extras::SessionPlayedFromStart(ctx)) {
+        ach::Unlock("game_finished");
+        const uint32_t game = kernel::R32(kGame);
+        if (game && kernel::R32(kernel::R32(game + 0x20) + 0x1C) == kHard) ach::Unlock("game_hard");
+    } else {
+        LOGI("achievements: the credits roll, but this game wasn't played from its start");
+    }
     __imp__sub_0023EF50(ctx, base);
 }
 
