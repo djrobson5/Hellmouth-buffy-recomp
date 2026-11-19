@@ -964,9 +964,10 @@ HLE_STDCALL(D3DDevice_SetPalette, 2) {
 
 // SwitchTexture(method, data, format), fastcall: a swizzled texture of the bound one's shape replaces it. It is
 // bound through a header of the stage's own holding the bound texture's fields with the new data and format.
+static uint32_t g_switch_headers[4];  // guest memory made on first use: kept with the device state for a rewind
 HLE_FASTCALL(D3DDevice_SwitchTexture, 1) {
     DeviceLock lock;
-    static uint32_t headers[4];
+    uint32_t(&headers)[4] = g_switch_headers;
     // texture methods from 0x1B00, 0x40 per stage
     uint32_t stage = (((a[0] & 0x1FFC) - 0x1B00) >> 6) & 3, cur = g_state.textures[stage];
     uint32_t& h = headers[stage];
@@ -1810,9 +1811,21 @@ struct DeviceSnapshot::D {
     std::vector<uint32_t> arr_inline;
     float im_attr[64];
     std::vector<float> im_vertices;
+    uint32_t switch_headers[4] = {};
 };
 DeviceSnapshot::DeviceSnapshot() = default;
 DeviceSnapshot::~DeviceSnapshot() = default;
+void DeviceSnapshot::Clear() { d.reset(); }
+
+void FlushDevice() {
+    std::lock_guard<std::recursive_mutex> lock(d3d::g_lock);
+    if (d3d::g_backend) d3d::g_backend->Flush();
+}
+
+bool DeviceCanReset() {
+    std::lock_guard<std::recursive_mutex> lock(d3d::g_lock);
+    return d3d::g_backend && d3d::g_backend->SupportsReset();
+}
 
 void CaptureDevice(DeviceSnapshot& out) {
     if (!out.d) out.d = std::make_unique<DeviceSnapshot::D>();
@@ -1844,6 +1857,7 @@ void CaptureDevice(DeviceSnapshot& out) {
     d.arr_inline = d3d::g_arr_inline;
     std::memcpy(d.im_attr, d3d::g_im_attr, sizeof d.im_attr);
     d.im_vertices = d3d::g_im_vertices;
+    std::memcpy(d.switch_headers, g_switch_headers, sizeof d.switch_headers);
 }
 
 void RestoreDevice(const DeviceSnapshot& in) {
@@ -1875,6 +1889,7 @@ void RestoreDevice(const DeviceSnapshot& in) {
     d3d::g_arr_inline = d.arr_inline;
     std::memcpy(d3d::g_im_attr, d.im_attr, sizeof d.im_attr);
     d3d::g_im_vertices = d.im_vertices;
+    std::memcpy(g_switch_headers, d.switch_headers, sizeof g_switch_headers);
     g_last_draw_gen = ~0ull;  // the next draw sends its state whole
     core::g_state_gen += 2;
     if (d3d::g_backend) {

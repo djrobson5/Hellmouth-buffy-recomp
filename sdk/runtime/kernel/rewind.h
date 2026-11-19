@@ -26,7 +26,7 @@ struct ThreadSnap {
     uint32_t id = 0, start = 0, system_routine = 0, start_context = 0;
     uint32_t esp = 0, ret = 0;  // where it blocks (the main thread: its context)
     uint64_t depth = 0;         // native stack in use
-    int suspend = 0, cs = 0, locks = 0;
+    int suspend = 0, cs = 0, locks = 0, host_work = 0;
     bool main = false;
     X86Context ctx;
     std::deque<std::array<uint32_t, 4>> apcs;
@@ -43,12 +43,16 @@ struct KernelSnapshot {
     std::shared_ptr<Files> files;
     std::vector<ThreadSnap> threads;
     Clocks clocks;
+    // lets go of everything held: the objects, the files (open handles, files to delete when closed) and the thread references
+    void Clear();
     bool valid = false;
 };
 
 // The calling thread is the main one: its context and the native stack it has used (from the frame of the caller that will
 // also restore) are given.
-void CaptureKernel(KernelSnapshot& out, X86Context& main_ctx, uint64_t main_depth);
+// 'locked' runs with the dispatcher and the tables locked, as RestoreObjects does, so the guest memory copied there and the objects
+// agree (a waiter satisfied meanwhile writes its object's header in guest memory).
+void CaptureKernel(KernelSnapshot& out, X86Context& main_ctx, uint64_t main_depth, const std::function<void()>& locked = {});
 
 struct RestorePlan {
     std::vector<size_t> restore;  // threads (in KernelSnapshot::threads) whose context is put back
@@ -80,7 +84,7 @@ void RestartThread(const ThreadSnap& s);
 
 // objects.cpp
 std::vector<ObjectRef> HandleObjects();
-void CaptureObjects(KernelSnapshot& out);
+void CaptureObjects(KernelSnapshot& out, const std::function<void()>& locked = {});
 // 'locked' runs with the dispatcher and the tables locked, so no waiter sees the memory and the objects out of step
 void RestoreObjects(const KernelSnapshot::Objects& in, int64_t steady_shift_ns, const std::function<void()>& locked);
 // files.cpp

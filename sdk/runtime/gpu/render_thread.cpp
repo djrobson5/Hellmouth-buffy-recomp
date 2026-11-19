@@ -235,6 +235,7 @@ public:
         cur_->cmds.push_back(c);
     }
 
+    bool SupportsReset() const override { return inner_->SupportsReset(); }
     void ResetResources() override {
         cur_->cmds.push_back(Cmd{Op::Reset});
         Wait(Submit(), WaitFor::Flush, "reset");

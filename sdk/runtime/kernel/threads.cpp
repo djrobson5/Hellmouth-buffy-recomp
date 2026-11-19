@@ -19,6 +19,8 @@
 namespace kernel {
 
 std::atomic<bool> g_rewinding{false};
+std::atomic<bool> g_rewind_fail_stop{false};
+static std::atomic<int64_t> g_gate_wait_ns{0};
 
 namespace {
 
@@ -350,7 +352,13 @@ HostWriter::HostWriter() {
     if (!Rewinding()) return;
     counted = true;
     if (t_writer_depth++ == 0) {
-        g_host_gate.lock_shared();
+        if (!g_host_gate.try_lock_shared()) {  // a hold is on: how long this thread waits for it
+            const auto t0 = std::chrono::steady_clock::now();
+            g_host_gate.lock_shared();
+            const int64_t ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
+            int64_t seen = g_gate_wait_ns.load();
+            while (ns > seen && !g_gate_wait_ns.compare_exchange_weak(seen, ns)) {}
+        }
         owns = true;
     }
 }
@@ -366,6 +374,28 @@ bool StopHostWriters(int timeout_ms) {
 }
 
 void StartHostWriters() { g_host_gate.unlock(); }
+
+int64_t TakeGateWaitNs() { return g_gate_wait_ns.exchange(0); }
+
+bool CanMeasureStack() {
+#ifdef _WIN32
+    return false;
+#else
+    return true;
+#endif
+}
+
+void HoldPoint(uint8_t blocked) {
+    Thread* t = Current();
+    if (!t) return;
+    for (;;) {
+        t->kstate = Thread::kRunning;  // says it runs before it looks at the hold (the holder sets the hold, then reads the states)
+        if (!g_hold.load() || g_hold_owner.load() == t) return;
+        t->kstate = blocked;
+        std::unique_lock<std::mutex> lock(g_hold_lock);
+        g_hold_cv.wait(lock, [&] { return !g_hold.load() || t->doomed.load(); });
+    }
+}
 
 std::vector<ThreadRef> QuiesceGuestThreads(int timeout_ms) {
     g_hold_owner = Current();
@@ -464,6 +494,7 @@ void CaptureThreads(std::vector<ThreadSnap>& out, X86Context& main_ctx, uint64_t
         s.suspend = t->suspend.load();
         s.cs = t->cs_held.load();
         s.locks = t->locks_held.load();
+        s.host_work = t->host_work.load();
         if (t.get() == Current()) {
             s.main = true;
             s.ctx = main_ctx;
@@ -489,6 +520,7 @@ bool StopThreads(const std::vector<ThreadRef>& threads, int timeout_ms) {
         std::lock_guard<std::mutex> lock(g_hold_lock);  // a thread parked in the hold sees it at once
     }
     g_hold_cv.notify_all();
+    SignalChanged();  // a thread in a wait looks at its doomed flag when it wakes
     for (const ThreadRef& t : threads) {
         std::lock_guard<std::mutex> lock(t->apc_lock);
         t->resume_cv.notify_all();
@@ -497,7 +529,7 @@ bool StopThreads(const std::vector<ThreadRef>& threads, int timeout_ms) {
     for (;;) {
         bool all = true;
         for (const ThreadRef& t : threads) all = all && t->exited.load();
-        if (all) return true;
+        if (all) return !g_rewind_fail_stop.exchange(false);  // (the test's failure comes after every thread has left)
         if (std::chrono::steady_clock::now() >= until) {
             for (const ThreadRef& t : threads)  // a thread still there stays: the restore is given up
                 if (!t->exited.load()) t->doomed = false;

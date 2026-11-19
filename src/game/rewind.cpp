@@ -14,7 +14,7 @@
 //   a file `rewind_cmd` in the run folder, read every 15 frames, one line each: `snap [N]` and `restore [N]` (test slot N, 0),
 //       `strict 0|1` (1: a restore that would stop or start a sound stream thread is refused), `kill` (the player is hit hard
 //       through the game's own damage, so the death screen comes), `failplan 0|1` (1: the plan made at the next Frame refuses, as
-//       if a thread had changed since the death), `cadence <secs>` (the time between rewind points), `checkpoint` (one at the
+//       if a thread had changed since the death), `cadence <secs>` (the time between rewind points), `failstop` (the next restore that has to stop a thread fails once that thread has gone: the failure path puts it back), `checkpoint` (one at the
 //       next Frame, safe or not), `state` (logs the player's fields the safe test reads)
 //   HELLMOUTH_REWIND_VERIFY=1 after each restore, the guest's memory is compared with the snapshot's (logged: "verified" or "VERIFY")
 //   HELLMOUTH_CHECKPOINT_SECS=<n> the time between rewind points; HELLMOUTH_CHECKPOINT_NOPREFAULT=1 leaves the buffers to be made at
@@ -77,6 +77,15 @@ struct Slot {
     uint64_t taken_frame = 0;
     float pos[3] = {};
     int number = 0;  // the checkpoint's number in this level
+    // lets go of what the snapshot holds but the memory buffer (kept to be filled again): the kernel's objects, open files and thread
+    // references, the device, sound and input state
+    void Invalidate() {
+        valid = false;
+        kernel.Clear();
+        device.Clear();
+        sound.Clear();
+        input.Clear();
+    }
 };
 
 struct Pair {
@@ -104,11 +113,12 @@ struct State {
     // the rewind points: two slots, `order` from the oldest to the newest
     Slot point[2];
     std::vector<int> order;
-    int taken = 0, rewinds = 0, fallbacks = 0;
+    int taken = 0, rewinds = 0, fallbacks = 0, failures = 0;
     Pending pending;
     bool bypass = false;  // a fallback ran the original: later calls go to it too
     Clock::time_point origin, level_start, next_at, last_rewind, last_death, last_hurt;
     bool have_rewound = false, have_died = false;
+    int report_gate = 0;  // a point whose hold's cost to the host's writers is to be logged at the next Frame
     bool in_level = false;  // MapSet has run: the front end has no map, and no rewind points
     uint64_t level_frames = 0;
     bool dead = false;  // DieAsPlayer has run and the death has not been settled (by a rewind or a reload): no point is taken
@@ -202,46 +212,60 @@ const char* Unsafe(X86Context& ctx, uint32_t player) {
 }
 
 // ---- holding the guest still
-bool Hold(const char* what, int n, std::vector<kernel::ThreadRef>& loose) {
-    if (!kernel::StopHostWriters(500)) {
-        LOGW("rewind: %s %d refused: a thread of the host that writes guest memory did not finish in 500 ms", what, n);
-        return false;
+// The guest held still for as long as this lives (an exception leaves it let go, not held for ever). The time is how long to wait for
+// the host's writers and for the guest's threads to stop: a restore may wait for long, a checkpoint only a frame or two.
+struct Held {
+    bool on = false;
+    Held(const char* what, int n, int timeout_ms) {
+        if (!kernel::StopHostWriters(timeout_ms)) {
+            LOGW("rewind: %s %d refused: a thread of the host that writes guest memory did not finish in %d ms", what, n, timeout_ms);
+            return;
+        }
+        const std::vector<kernel::ThreadRef> loose = kernel::QuiesceGuestThreads(timeout_ms);
+        if (!loose.empty()) {
+            kernel::ResumeGuestThreads();
+            kernel::StartHostWriters();
+            for (const kernel::ThreadRef& t : loose)
+                LOGW("rewind: %s %d refused: thread %X (start %08X) kept running for %d ms", what, n, t->id, t->start_routine, timeout_ms);
+            return;
+        }
+        on = true;
     }
-    loose = kernel::QuiesceGuestThreads(500);
-    if (!loose.empty()) {
+    ~Held() { Release(); }
+    Held(const Held&) = delete;
+    Held& operator=(const Held&) = delete;
+    void Release() {
+        if (!on) return;
+        on = false;
         kernel::ResumeGuestThreads();
         kernel::StartHostWriters();
-        for (const kernel::ThreadRef& t : loose)
-            LOGW("rewind: %s %d refused: thread %X (start %08X) kept running for 500 ms", what, n, t->id, t->start_routine);
-        return false;
     }
-    return true;
-}
+    explicit operator bool() const { return on; }
+};
 
-void Release() {
-    kernel::ResumeGuestThreads();
-    kernel::StartHostWriters();
-}
+constexpr int kRestoreHoldMs = 500;     // a restore is worth waiting for
+constexpr int kCheckpointHoldMs = 25;   // a checkpoint is not: its two waits together stay inside a frame or two
 
 // Takes a snapshot into the slot; false when the guest could not be held still (the slot is left as it was)
 struct Took {
     double total_ms = 0, held_ms = 0, copy_ms = 0;
     bool ok = false;
 };
-Took Capture(Slot& s, const char* what, int n, X86Context& ctx, uint64_t depth) {
+Took Capture(Slot& s, const char* what, int n, X86Context& ctx, uint64_t depth, int hold_ms) {
     Took r;
     const auto t0 = Clock::now();
-    std::vector<kernel::ThreadRef> loose;
-    if (!Hold(what, n, loose)) return r;
+    kernel::TakeGateWaitNs();  // what is measured below is this hold's
+    Held hold(what, n, hold_ms);
+    if (!hold) return r;
     const auto t_held = Clock::now();
-    s.valid = false;
+    s.Invalidate();
     xdk::CaptureDevice(s.device);
     xdk::CaptureSound(s.sound);
     xdk::CaptureInput(s.input);
-    mem::CaptureSnapshot(s.memory);
-    kernel::CaptureKernel(s.kernel, ctx, depth);
+    // the guest's memory is copied under the lock the kernel's objects are taken under, so the two agree
+    kernel::CaptureKernel(s.kernel, ctx, depth, [&] { mem::CaptureSnapshot(s.memory); });
     const auto t_copy = Clock::now();
-    Release();
+    hold.Release();
     s.valid = true;
     s.taken = t0;
     s.taken_frame = g.frames;
@@ -276,18 +300,20 @@ struct Put {
 Put Restore(Slot& s, const char* what, int n, X86Context& ctx, uint64_t depth) {
     Put r;
     const auto t0 = Clock::now();
-    std::vector<kernel::ThreadRef> loose;
-    if (!Hold(what, n, loose)) {
+    Held hold(what, n, kRestoreHoldMs);
+    if (!hold) {
         r.refuse = "the guest could not be held still";
         return r;
     }
+    // a render thread may still be reading or writing guest pages: it finishes while the guest is held, before memory is replaced
+    xdk::FlushDevice();
     r.plan = kernel::PlanRestore(s.kernel, ctx, depth, g.strict ? 0 : kStreamThread);
     if (r.plan.refuse.empty() && g.force_refuse) {
         r.plan.refuse = "refused on the test's order (failplan)";
         g.force_refuse = false;
     }
     if (!r.plan.refuse.empty()) {
-        Release();
+        hold.Release();
         r.refuse = r.plan.refuse;
         for (const kernel::ThreadRef& t : kernel::Threads())
             LOGW("rewind: %s %d thread %X start %08X %s site %08X esp %08X", what, n, t->id, t->start_routine, StateName(t->kstate.load()), t->k_ret.load(), t->k_esp.load());
@@ -296,7 +322,7 @@ Put Restore(Slot& s, const char* what, int n, X86Context& ctx, uint64_t depth) {
     const auto t_plan = Clock::now();
     r.result = kernel::RestoreKernel(s.kernel, s.memory, r.plan, ctx);
     if (!r.result.error.empty()) {
-        Release();
+        hold.Release();
         r.refuse = "the restore failed part way: " + r.result.error;
         return r;
     }
@@ -312,7 +338,7 @@ Put Restore(Slot& s, const char* what, int n, X86Context& ctx, uint64_t depth) {
     xdk::ForgetMovies();
     g.epoch++;
     const auto t_done = Clock::now();
-    Release();
+    hold.Release();
     r.total_ms = Ms(Clock::now() - t0);
     r.plan_ms = Ms(t_plan - t0);
     r.state_ms = Ms(t_done - t_plan);
@@ -332,7 +358,7 @@ void LogRestored(const char* what, int seq, const Slot& s, const Put& p) {
 // ---- the test slots (rewind_cmd, HELLMOUTH_REWIND_TEST)
 void TestSnapshot(size_t n, X86Context& ctx, uint64_t depth) {
     Slot& s = SlotAt(n);
-    const Took t = Capture(s, "snapshot", int(n), ctx, depth);
+    const Took t = Capture(s, "snapshot", int(n), ctx, depth, kRestoreHoldMs);
     if (!t.ok) return;
     LOGI("rewind: snapshot %zu at %.1f s (frame %llu): %.1f MB in %.1f ms (held %.1f ms), %zu threads (%d stream)", n, Secs(s.taken - g.origin), (unsigned long long)g.frames,
          s.memory.data_bytes / 1048576.0, t.copy_ms, t.total_ms, s.kernel.threads.size(), StreamThreads(s));
@@ -401,7 +427,7 @@ void DropPoints(const char* why) {
     int dropped = 0;
     for (Slot& s : g.point) {
         dropped += s.valid;
-        s.valid = false;
+        s.Invalidate();
         mem::ReleaseSnapshot(s.memory);
     }
     g.order.clear();
@@ -416,14 +442,20 @@ void TakePoint(X86Context& ctx, uint64_t depth, const char* why) {
     else idx = g.order[0];  // the older one is given up
     Slot& s = g.point[idx];
     const bool had = s.valid;
-    const Took t = Capture(s, "checkpoint", g.taken + 1, ctx, depth);
+    const Took t = Capture(s, "checkpoint", g.taken + 1, ctx, depth, kCheckpointHoldMs);
     if (!t.ok) {
-        g.next_at = Clock::now() + std::chrono::seconds(2);  // again soon
+        // the guest was busy: ask again later, and later still each time it fails (2, 4, 8 ... 30 s), so a bad stretch costs little
+        g.failures++;
+        const int wait_s = std::min(30, 1 << std::min(g.failures, 5));
+        g.next_at = Clock::now() + std::chrono::seconds(wait_s);
+        LOGI("rewind: checkpoint attempt %d failed (the guest did not stop within %d ms); the next try in %d s", g.failures, kCheckpointHoldMs, wait_s);
         return;
     }
+    g.failures = 0;
     if (had) g.order.erase(g.order.begin());
     g.order.push_back(idx);
     s.number = ++g.taken;
+    g.report_gate = s.number;
     g.next_at = Clock::now() + std::chrono::milliseconds(int64_t(g.interval * 1000));
     const uint32_t p = Player();
     LOGI("rewind: checkpoint %d taken (%s) %.1f s into the level, frame %llu, player at %.2f %.2f %.2f, category %08X, health %.0f, unhurt for %.1f s: %.1f MB in %.1f ms (copy %.1f ms, "
@@ -456,6 +488,11 @@ bool Death(X86Context& ctx, uint32_t arg) {
     if (!g.on || g.bypass || kernel::Current() != g.main) return false;
     std::lock_guard<std::mutex> lock(g.lock);
     if (g.pending.on) return true;  // the choice was made twice in a frame
+    // only a death goes back: DieAsPlayer has run, or the player is dying. Any other caller gets the game's own call.
+    if (!g.dead && !(Player() && Dying(Player()))) {
+        LOGI("rewind: PlayerDeathReload was called with the player not dead: left to the game");
+        return false;
+    }
     const char* why = "";
     const int idx = ChoosePoint(&why);
     if (idx < 0) {
@@ -465,14 +502,14 @@ bool Death(X86Context& ctx, uint32_t arg) {
     }
     // the threads must be as they were; the main thread's place is checked at the Frame, where the restore is made
     {
-        std::vector<kernel::ThreadRef> loose;
-        if (!Hold("rewind", g.rewinds + 1, loose)) {
+        Held hold("rewind", g.rewinds + 1, kRestoreHoldMs);
+        if (!hold) {
             g.fallbacks++;
             LOGW("rewind: fallback %d: the guest could not be held still to check: the game reloads the level from its start", g.fallbacks);
             return false;
         }
         const kernel::RestorePlan plan = kernel::PlanRestore(g.point[idx].kernel, ctx, 0, g.strict ? 0 : kStreamThread, false);
-        Release();
+        hold.Release();
         if (!plan.refuse.empty()) {
             g.fallbacks++;
             LOGI("rewind: fallback %d: %s: the game reloads the level from its start", g.fallbacks, plan.refuse.c_str());
@@ -498,7 +535,7 @@ void Rewind(X86Context& ctx, uint64_t depth) {
             g.rewinds++;
             // a point newer than the one gone back to belongs to the life that just ended
             while (!g.order.empty() && g.order.back() != p.slot) {
-                g.point[g.order.back()].valid = false;
+                g.point[g.order.back()].Invalidate();  // and what it holds: objects, files, threads
                 g.order.pop_back();
             }
             g.have_rewound = true;
@@ -543,6 +580,9 @@ bool Command(X86Context& ctx, uint64_t depth) {
         if (w == "strict") {
             g.strict = n != 0;
             LOGI("rewind: strict %d (%s)", n, g.strict ? "a restore that would stop or start a sound stream thread is refused" : "a sound stream thread may be stopped or started again");
+        } else if (w == "failstop") {
+            kernel::g_rewind_fail_stop = n != 0;
+            LOGI("rewind: failstop %d (the next restore that stops a thread fails after it has stopped it)", n);
         } else if (w == "failplan") {
             g.force_refuse = n != 0;
             LOGI("rewind: failplan %d", n);
@@ -568,6 +608,10 @@ bool Command(X86Context& ctx, uint64_t depth) {
 // the rewind points' bookkeeping at each frame: damage seen, and a point when one is due and it is safe
 void Checkpoints(X86Context& ctx, uint64_t depth) {
     const auto now = Clock::now();
+    if (g.report_gate) {  // a writer that was kept out of the gate wakes only after the hold is let go: its wait is read a frame later
+        LOGI("rewind: checkpoint %d: a host writer (the sound mixer among them) waited at the gate for at most %.1f ms", g.report_gate, double(kernel::TakeGateWaitNs()) / 1e6);
+        g.report_gate = 0;
+    }
     const uint32_t player = Player();
     if (player) {
         const float hp = Health(player);
@@ -658,6 +702,14 @@ void LevelStarted(X86Context&) {
     g.level_frames = 0;
     DropPoints("a level begins");
     if (!g.on) return;
+    // A restore needs the renderer to drop what it made from guest memory (gpu::Backend::ResetResources) and the native stack depth of
+    // each thread to be known (HostStackBase); without them it is not done, so the setting does nothing here
+    if (!xdk::DeviceCanReset() || !kernel::CanMeasureStack()) {
+        g.on = false;
+        LOGW("rewind: mid-level checkpoints are not supported on this renderer/platform (%s): off", kernel::CanMeasureStack() ? "the renderer cannot reset what it made from guest memory" : "the native stack depth is unknown");
+        return;
+    }
+    kernel::EnsureDpcThread();  // its stack and KPCR are guest memory: made before the first snapshot, not after
     LOGI("rewind: checkpoints on for %s: the first is due after %.0f s", extras::CurrentMap().c_str(), g.interval);
 }
 

@@ -209,6 +209,11 @@ static uint32_t WaitFor(const std::vector<ObjectRef>& objs, bool wait_all, int64
                     return kWait0 + uint32_t(i);
                 }
         }
+        if (self && self->doomed.load()) {  // the rewind stops this thread: it leaves, touching no guest memory
+            lock.unlock();
+            SuspendPoint();  // does not return for a thread that is to be stopped
+            lock.lock();
+        }
         if (alertable && self) {
             bool pending;
             {
@@ -358,6 +363,13 @@ bool RemoveDpc(uint32_t dpc) {
     return was;
 }
 
+void EnsureDpcThread() {
+    std::lock_guard<std::mutex> lock(g_dpc_lock);
+    if (g_dpc_thread) return;
+    g_dpc_thread = true;
+    StartHostThread("dpc", [](X86Context& ctx) { RunDpcs(ctx); });
+}
+
 void QueueDpc(uint32_t dpc, uint32_t arg1, uint32_t arg2) {
     std::lock_guard<std::mutex> lock(g_dpc_lock);
     W32(dpc + 0x14, arg1);  // KDPC.SystemArgument1 and 2
@@ -462,10 +474,11 @@ std::vector<ObjectRef> HandleObjects() {
     return v;
 }
 
-void CaptureObjects(KernelSnapshot& out) {
+void CaptureObjects(KernelSnapshot& out, const std::function<void()>& locked) {
     if (!out.objects) out.objects = std::make_shared<KernelSnapshot::Objects>();
     KernelSnapshot::Objects& o = *out.objects;
     std::scoped_lock all(g_dispatch, g_handles_lock, g_ptr_lock, g_timer_lock, g_dpc_lock);
+    if (locked) locked();
     o.handles = g_handles;
     o.next_handle = g_next_handle;
     o.by_ptr = g_by_ptr;

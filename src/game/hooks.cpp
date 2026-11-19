@@ -22,7 +22,6 @@ X86_FUNC(sub_002AA870) {
     std::atomic_ref<uint32_t> count = LockerCount(ctx, base);
     const auto start = std::chrono::steady_clock::now();
     bool warned = false, spinning = false;
-    kernel::Thread* self = kernel::Current();
     for (uint32_t tries = 0;; tries++) {
         uint32_t expected = 0;
         if (count.compare_exchange_weak(expected, 1, std::memory_order_acquire, std::memory_order_relaxed)) break;
@@ -30,11 +29,10 @@ X86_FUNC(sub_002AA870) {
             std::this_thread::yield();
             continue;
         }
-        if (!spinning) {  // tells a thread that holds the guest still (the rewind probe) this one only waits
-            spinning = true;
-            kernel::EnterBlocked(kernel::Thread::kSpinning, __builtin_frame_address(0));
-        }
+        spinning = true;  // tells a thread that holds the guest still (the rewind) this one only waits
+        kernel::EnterBlocked(kernel::Thread::kSpinning, __builtin_frame_address(0));
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        kernel::HoldPoint(kernel::Thread::kSpinning);  // running again, and not held: the next attempt may write guest memory
         if (!warned && std::chrono::steady_clock::now() - start > std::chrono::seconds(10)) {
             warned = true;
             LOGW("buffy: lock %s still held after 10 s (count %d)", kernel::ReadCString(kernel::R32(ctx.ecx + 4)).c_str(),
@@ -42,11 +40,11 @@ X86_FUNC(sub_002AA870) {
             logx::Flush();
         }
     }
+    kernel::CountHeld(&kernel::Thread::locks_held, 1);  // before the thread can park: the lock is its own from the exchange
     if (spinning) {
         kernel::LeaveBlocked();
         kernel::SuspendPoint();
     }
-    if (self && kernel::Rewinding()) self->locks_held++;
     ctx.esp += 4;
 }
 
@@ -55,8 +53,8 @@ X86_FUNC(sub_002AA950) {
     uint32_t expected = 1;
     if (!LockerCount(ctx, base).compare_exchange_strong(expected, 0, std::memory_order_release, std::memory_order_relaxed))
         LOGW("buffy: unlock of %s with count %d", kernel::ReadCString(kernel::R32(ctx.ecx + 4)).c_str(), int32_t(expected));
-    else if (kernel::Rewinding())
-        if (kernel::Thread* self = kernel::Current()) self->locks_held--;
+    else
+        kernel::CountHeld(&kernel::Thread::locks_held, -1);
     ctx.esp += 4;
 }
 

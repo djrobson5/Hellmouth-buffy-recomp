@@ -44,6 +44,9 @@ public:
     // the guest's memory was put back (a rewind): every texture and render target held for a guest address is dropped, to be made
     // again from memory on the next draw
     virtual void ResetResources() {}
+    // whether ResetResources drops everything made from guest memory (a game that rewinds needs that): false by default, so a backend
+    // that has not been written for it keeps the rewind off
+    virtual bool SupportsReset() const { return false; }
     virtual void SetGamma(const uint8_t* ramp /*3 x 256*/) = 0;
 
     // the XDK's visibility tests: the pixels drawn that pass the depth and stencil tests between Begin and End, which

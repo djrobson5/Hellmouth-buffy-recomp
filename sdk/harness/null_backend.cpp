@@ -119,6 +119,7 @@ public:
     void Sync(uint32_t, uint32_t) override {}
     void SyncLate(uint32_t) override {}
     void Flush() override {}
+    bool SupportsReset() const override { return true; }  // it makes nothing from guest memory
     void SetGamma(const uint8_t*) override {}
     // counted only when every frame is drawn (REF=1); otherwise the SDK reads everything as visible
     bool Queries() const override { return harness::Env("REF") == 1 && !harness::Env("REF_FROM"); }

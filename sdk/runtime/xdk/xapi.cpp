@@ -199,6 +199,7 @@ struct InputSnapshot::D {
 };
 InputSnapshot::InputSnapshot() = default;
 InputSnapshot::~InputSnapshot() = default;
+void InputSnapshot::Clear() { d.reset(); }
 
 void CaptureInput(InputSnapshot& out) {
     if (!out.d) out.d = std::make_unique<InputSnapshot::D>();

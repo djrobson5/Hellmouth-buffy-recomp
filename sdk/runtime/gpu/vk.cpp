@@ -109,6 +109,7 @@ public:
     void SyncLate(uint32_t data) override { Sync(data, 0); }
     void Flush() override;
     void ResetResources() override;
+    bool SupportsReset() const override { return true; }
     void SetGamma(const uint8_t* ramp) override;
     // queries, fences and busy checks: the Backend defaults (none counted, so every test reads as visible; never behind)
 

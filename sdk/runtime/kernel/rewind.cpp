@@ -23,9 +23,16 @@ void SetContext(X86Context& to, const X86Context& from) {
 
 }  // namespace
 
-void CaptureKernel(KernelSnapshot& out, X86Context& main_ctx, uint64_t main_depth) {
+void KernelSnapshot::Clear() {
+    objects.reset();
+    files.reset();
+    threads.clear();
+    valid = false;
+}
+
+void CaptureKernel(KernelSnapshot& out, X86Context& main_ctx, uint64_t main_depth, const std::function<void()>& locked) {
     CaptureThreads(out.threads, main_ctx, main_depth);
-    CaptureObjects(out);
+    CaptureObjects(out, locked);
     CaptureFiles(out, HandleObjects());
     out.clocks = CaptureClocks();
     out.valid = true;
@@ -60,6 +67,8 @@ RestorePlan PlanRestore(const KernelSnapshot& snap, X86Context& main_ctx, uint64
             } else if (check_main && (main_ctx.esp != s.esp || R32(main_ctx.esp) != s.ret || main_depth != s.depth)) {
                 refuse("the main thread is not at the snapshot's place (esp %08X, was %08X; native depth %llu, was %llu)", main_ctx.esp, s.esp,
                        (unsigned long long)main_depth, (unsigned long long)s.depth);
+            } else if (c->cs_held.load() != s.cs || c->locks_held.load() != s.locks || c->host_work.load() || s.host_work) {
+                refuse("the main thread holds %d critical sections and %d locks (was %d, %d) or is in host work", c->cs_held.load(), c->locks_held.load(), s.cs, s.locks);
             } else {
                 p.restore.push_back(i);
             }
@@ -69,7 +78,12 @@ RestorePlan PlanRestore(const KernelSnapshot& snap, X86Context& main_ctx, uint64
             const uintptr_t sp = c->host_sp.load();
             const uint64_t depth = c->host_base && sp ? c->host_base - sp : 0;
             const bool same = c->start_routine == s.start && c->k_ret.load() == s.ret && c->k_esp.load() == s.esp && depth == s.depth;
-            if (same) {
+            if (same && (c->cs_held.load() != s.cs || c->locks_held.load() != s.locks)) {
+                // it would come out of the restore owning a lock the restored memory says is free, or the reverse
+                refuse("thread %X holds %d critical sections and %d locks (was %d, %d)", s.id, c->cs_held.load(), c->locks_held.load(), s.cs, s.locks);
+            } else if (same && (c->host_work.load() || s.host_work)) {
+                refuse("thread %X is inside host work that keeps its own state across the block", s.id);
+            } else if (same) {
                 p.restore.push_back(i);
             } else if (movable && c->start_routine == transient) {
                 p.stop.push_back(c);
@@ -100,7 +114,21 @@ RestoreResult RestoreKernel(KernelSnapshot& snap, const mem::Snapshot& memory, R
     RestoreResult r;
     if (!plan.stop.empty()) {
         if (!StopThreads(plan.stop, 2000)) {
-            r.error = "a thread to stop did not leave in 2 s";
+            // nothing else has changed, but a thread that had left must not stay lost: it starts again from its entry (the
+            // threads that can be stopped hold nothing of their own), with the memory as it is
+            int back = 0;
+            for (const ThreadRef& t : plan.stop) {
+                if (!t->exited.load()) continue;
+                ThreadSnap own;
+                own.t = t;
+                own.id = t->id;
+                own.start = t->start_routine;
+                own.system_routine = t->system_routine;
+                own.start_context = t->start_context;
+                RestartThread(own);
+                back++;
+            }
+            r.error = "a thread to stop did not leave in 2 s (" + std::to_string(back) + " that had left started again)";
             return r;
         }
         r.stopped = int(plan.stop.size());

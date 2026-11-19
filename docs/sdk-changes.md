@@ -93,3 +93,16 @@ What this port changed:
   page touched, so the first snapshots do not wait for the system to supply pages) and `ReleaseSnapshot`. A snapshot that finds its buffer too small
   makes a new one, 12.5% larger than it needs (`Snapshot::reused` says which). `mem::DiffSnapshot` counts the bytes that differ between the
   guest's memory and a snapshot, for checking a restore.
+- Review fixes to the rewind (`kernel/threads.cpp`, `objects.cpp`, `rewind.cpp`, `xboxkrnl.cpp`, `xdk/*`, `gpu/*`):
+  - `xdk::FlushDevice` finishes what the renderer was given while the guest is held, before a restore replaces memory. `gpu::Backend::SupportsReset`
+    (false by default; the Vulkan backend, the threaded renderer over it and the harness's null backend say true) and `kernel::CanMeasureStack`
+    (false on Windows, where `HostStackBase` cannot ask) let a game keep the rewind off where it cannot be done right.
+  - `kernel::HoldPoint` is for a thread that waits by polling guest memory (the CLocker spin): it says it runs before it looks at the hold and waits,
+    in its blocked state, while the guest is held. `PlanRestore` refuses when a thread would come out holding a different number of critical
+    sections or locks than the snapshot had, or sits inside host work (`Thread::host_work`, set around DirectSound's completed callbacks).
+  - `CaptureKernel` takes a callback that runs with the dispatcher and the tables locked; the game copies guest memory there, so the objects and the
+    memory agree. Waits and delays look at `Thread::doomed`, so `StopThreads` can stop a thread blocked in one; when it fails, the threads that had
+    already left start again from their entry (`g_rewind_fail_stop` makes it fail, for a test). `KernelSnapshot::Clear` lets go of the objects, files and
+    thread references a snapshot holds.
+  - `EnsureDpcThread` starts the DPC thread (its stack and KPCR are guest memory) before the first snapshot. The device snapshot keeps
+    `SwitchTexture`'s lazily made header table. `TakeGateWaitNs` reports the longest a host writer waited at the gate.

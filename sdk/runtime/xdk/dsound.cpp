@@ -515,6 +515,15 @@ int64_t NowMs() {
 }
 
 void Run(X86Context& ctx, const std::vector<Done>& done) {
+    if (done.empty()) return;
+    // the callbacks taken out of g_done wait in this frame's vector while one of them runs (and may block): a restore must not put a
+    // thread back into a frame whose vector is another time's
+    kernel::Thread* self = kernel::Current();
+    struct Work {
+        kernel::Thread* t;
+        Work(kernel::Thread* th) : t(th) { if (t) t->host_work++; }
+        ~Work() { if (t) t->host_work--; }
+    } work(self);
     for (const Done& d : done) CallGuest(ctx, d.callback, {d.context, d.packet_context, d.status});
 }
 
@@ -1197,6 +1206,7 @@ struct SoundSnapshot::D {
 };
 SoundSnapshot::SoundSnapshot() = default;
 SoundSnapshot::~SoundSnapshot() = default;
+void SoundSnapshot::Clear() { d.reset(); }
 
 void CaptureSound(SoundSnapshot& out) {
     if (!out.d) out.d = std::make_unique<SoundSnapshot::D>();

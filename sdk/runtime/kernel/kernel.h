@@ -189,6 +189,7 @@ struct Thread : Object {
     std::atomic<bool> doomed{false};  // the rewind stops this thread: it leaves at its next SuspendPoint, touching no guest memory
     std::atomic<bool> exited{false};  // set when it has left that way
     std::atomic<int> cs_held{0}, locks_held{0};  // guest critical sections and the game's own locks the thread holds
+    std::atomic<int> host_work{0};               // host frames of the thread that carry work of their own across a block (a game says so)
     Thread() : Object(ObjType::Thread) {}
 };
 using ThreadRef = std::shared_ptr<Thread>;
@@ -230,6 +231,23 @@ struct HostWriter {
 extern std::atomic<bool> g_rewinding;
 inline bool Rewinding() { return g_rewinding.load(std::memory_order_relaxed); }
 void EnableRewinding();
+// For a thread that waits by polling guest memory (the game's spin lock): called before each attempt, it returns in the Running state
+// once the guest is not held, and while it is held waits in the state 'blocked' (which the thread set with EnterBlocked), so the
+// attempt that follows writes no guest memory during a hold.
+void HoldPoint(uint8_t blocked);
+// The longest a host writer waited at the gate since the last call, in nanoseconds (for measuring what a hold costs the sound).
+int64_t TakeGateWaitNs();
+// Starts the DPC thread now (it is otherwise made by the first QueueDpc, and its stack and KPCR are guest memory a restore may free).
+void EnsureDpcThread();
+// Whether the native stack depth of a thread is known (the rewind compares it); false where HostStackBase has no way to ask.
+bool CanMeasureStack();
+// test: StopThreads reports failure after it has stopped them, to show the restore's failure path
+extern std::atomic<bool> g_rewind_fail_stop;
+// Counts the critical sections and locks a thread holds, when a game rewinds (null thread: nothing)
+inline void CountHeld(std::atomic<int> Thread::*what, int by) {
+    if (!Rewinding()) return;
+    if (Thread* t = Current()) (t->*what).fetch_add(by);
+}
 bool StopHostWriters(int timeout_ms);
 void StartHostWriters();
 std::vector<ThreadRef> QuiesceGuestThreads(int timeout_ms);
