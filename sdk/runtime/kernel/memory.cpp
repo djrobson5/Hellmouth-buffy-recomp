@@ -563,6 +563,40 @@ void CaptureSnapshot(Snapshot& out) {
     out.table_bytes = tb;
 }
 
+uint64_t RestoreSnapshot(const Snapshot& in) {
+    if (!in.tables) return 0;
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    const Snapshot::Tables& t = *in.tables;
+    const size_t n = std::min(g_committed.size(), t.committed.size());
+    // pages the snapshot did not have go back to nothing (a later commit reads as zeros), pages it had that are gone are
+    // committed again before their bytes are copied
+    for (size_t p = 0; p < n;) {
+        const bool now = g_committed[p] != 0, then = t.committed[p] != 0;
+        if (now == then) {
+            p++;
+            continue;
+        }
+        size_t q = p;
+        while (q < n && (g_committed[q] != 0) == now && (t.committed[q] != 0) == then) q++;
+        if (now) Decommit(uint32_t(p << 12), uint32_t((q - p) << 12));
+        else Commit(uint32_t(p << 12), uint32_t((q - p) << 12));
+        p = q;
+    }
+    g_contig = t.contig;
+    g_system = t.system;
+    g_stacks = t.stacks;
+    g_user = t.user;
+    g_stack_tops = t.stack_tops;
+    g_reserved = t.reserved;
+    g_host_physical_next = t.host_physical_next;
+    uint64_t bytes = 0;
+    for (const SnapshotRange& r : in.ranges) {
+        std::memcpy(g_base + r.va, in.data.get() + r.offset, r.size);
+        bytes += r.size;
+    }
+    return bytes;
+}
+
 Stats Query() {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     Stats s{};

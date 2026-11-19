@@ -208,11 +208,18 @@ void x86_priv(X86Context& ctx, uint32_t va, const char* what) {
     (void)ctx;
 }
 
-// the guest measured time against a 733.33 MHz time stamp counter
-uint64_t x86_rdtsc() {
+// the guest measured time against a 733.33 MHz time stamp counter. The skew is the rewind's: after a restore the counter goes on
+// from the snapshot's reading
+static std::atomic<int64_t> g_tsc_skew_ns{0};
+static int64_t RawTscNs() {
     using namespace std::chrono;
     static const auto start = steady_clock::now();
-    auto ns = duration_cast<nanoseconds>(steady_clock::now() - start).count();
+    return duration_cast<nanoseconds>(steady_clock::now() - start).count();
+}
+int64_t x86_tsc_ns() { return RawTscNs() - g_tsc_skew_ns.load(); }
+void x86_set_tsc_ns(int64_t ns) { g_tsc_skew_ns = RawTscNs() - ns; }
+uint64_t x86_rdtsc() {
+    int64_t ns = x86_tsc_ns();
     uint64_t sec = uint64_t(ns) / 1000000000ull, rem = uint64_t(ns) % 1000000000ull;
     return sec * 733333333ull + rem * 733333333ull / 1000000000ull;
 }

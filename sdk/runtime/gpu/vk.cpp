@@ -108,6 +108,7 @@ public:
     // a NOOVERWRITE lock: read back at once (D3D12 hands over a finished copy a frame old instead)
     void SyncLate(uint32_t data) override { Sync(data, 0); }
     void Flush() override;
+    void ResetResources() override;
     void SetGamma(const uint8_t* ramp) override;
     // queries, fences and busy checks: the Backend defaults (none counted, so every test reads as visible; never behind)
 
@@ -1004,6 +1005,19 @@ void VkBackend::Submit(bool wait) {
 }
 
 void VkBackend::Flush() { Submit(true); }
+
+// a rewind put the guest's memory back: what was made from it, textures by address and targets by address, is made again on
+// the next draw (as ScaleChanged does for the targets)
+void VkBackend::ResetResources() {
+    if (!device_ || lost_) return;
+    Submit(true);
+    vkDeviceWaitIdle(device_);
+    render_rt_ = render_ds_ = nullptr;
+    for (auto& [key, t] : targets_) DestroyTarget(t);
+    targets_.clear();
+    for (auto& [key, tx] : textures_) DestroyImage(tx.img);
+    textures_.clear();
+}
 
 // a full barrier between any earlier use and the next: simple and always right; finer stages come with profiling
 void VkBackend::ToLayout(VkImage image, bool depth, VkImageLayout& cur, VkImageLayout want) {

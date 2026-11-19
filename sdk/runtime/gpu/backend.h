@@ -41,6 +41,9 @@ public:
     virtual bool DeliverLate(uint32_t) { return false; }
     virtual void RecordLate(uint32_t) {}
     virtual void Flush() = 0;
+    // the guest's memory was put back (a rewind): every texture and render target held for a guest address is dropped, to be made
+    // again from memory on the next draw
+    virtual void ResetResources() {}
     virtual void SetGamma(const uint8_t* ramp /*3 x 256*/) = 0;
 
     // the XDK's visibility tests: the pixels drawn that pass the depth and stencil tests between Begin and End, which

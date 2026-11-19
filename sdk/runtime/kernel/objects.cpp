@@ -4,6 +4,7 @@
 #include <queue>
 
 #include "kernel/kernel.h"
+#include "kernel/rewind.h"
 
 namespace kernel {
 
@@ -328,14 +329,19 @@ bool g_dpc_thread = false;
 
 void RunDpcs(X86Context& ctx) {
     for (;;) {
-        std::array<uint32_t, 3> d;
         {
             std::unique_lock<std::mutex> lock(g_dpc_lock);
             g_dpc_cv.wait(lock, [] { return !g_dpcs.empty(); });
+        }
+        // the gate before the item is taken: one taken while the guest is held would run after a restore that did not know of it
+        HostWriter writing;
+        std::array<uint32_t, 3> d;
+        {
+            std::unique_lock<std::mutex> lock(g_dpc_lock);
+            if (g_dpcs.empty()) continue;
             d = g_dpcs.front();
             g_dpcs.pop_front();
         }
-        HostWriter writing;
         uint32_t dpc = d[0];
         G<uint8_t>(dpc + 2) = 0;  // Inserted
         uint32_t routine = R32(dpc + 0x0C), context = R32(dpc + 0x10);  // KDPC.DeferredRoutine and DeferredContext
@@ -378,10 +384,15 @@ static void TimerLoop() {
             g_timer_cv.wait_for(lock, nanoseconds(e.deadline - now));
             continue;
         }
+        // due: the gate is entered with the lock let go (a restore holds the gate and takes the lock), and the queue looked at
+        // again after, as the restore may have put another in its place
+        lock.unlock();
+        HostWriter writing;
+        lock.lock();
+        if (g_timers.empty() || g_timers.top().seq != e.seq) continue;
         g_timers.pop();
         auto it = g_timer_seq.find(e.timer.get());
         if (it == g_timer_seq.end() || it->second != e.seq) continue;
-        HostWriter writing;
         {
             std::lock_guard<std::mutex> dl(g_dispatch);
             SetSignal(*e.timer, 1);
@@ -419,6 +430,96 @@ void SetTimer(ObjectRef timer, int64_t due, int32_t period_ms, uint32_t dpc, std
 bool CancelTimer(Object& timer) {
     std::lock_guard<std::mutex> lock(g_timer_lock);
     return g_timer_seq.erase(&timer) != 0;
+}
+
+// ---- the rewind: the object tables, timers and DPCs (kernel/rewind.h)
+
+struct KernelSnapshot::Objects {
+    struct Fields {
+        ObjectRef obj;
+        int32_t signal, limit;
+        bool notification;
+        uint32_t owner, recursion, exit_code;
+    };
+    std::unordered_map<uint32_t, ObjectRef> handles;
+    uint32_t next_handle = 0;
+    std::unordered_map<uint32_t, PtrEntry> by_ptr;
+    uint32_t serial = 0;
+    std::vector<Fields> fields;  // every object the tables or the timers hold
+    std::vector<TimerEntry> timers;
+    std::unordered_map<Object*, uint64_t> timer_seq;
+    uint64_t seq = 0;
+    std::deque<std::array<uint32_t, 3>> dpcs;
+};
+KernelSnapshot::KernelSnapshot() = default;
+KernelSnapshot::~KernelSnapshot() = default;
+
+std::vector<ObjectRef> HandleObjects() {
+    std::lock_guard<std::mutex> lock(g_handles_lock);
+    std::vector<ObjectRef> v;
+    v.reserve(g_handles.size());
+    for (auto& [h, o] : g_handles) v.push_back(o);
+    return v;
+}
+
+void CaptureObjects(KernelSnapshot& out) {
+    if (!out.objects) out.objects = std::make_shared<KernelSnapshot::Objects>();
+    KernelSnapshot::Objects& o = *out.objects;
+    std::scoped_lock all(g_dispatch, g_handles_lock, g_ptr_lock, g_timer_lock, g_dpc_lock);
+    o.handles = g_handles;
+    o.next_handle = g_next_handle;
+    o.by_ptr = g_by_ptr;
+    o.serial = g_serial;
+    o.seq = g_seq;
+    o.timer_seq = g_timer_seq;
+    o.dpcs = g_dpcs;
+    o.timers.clear();
+    auto q = g_timers;
+    while (!q.empty()) {
+        o.timers.push_back(q.top());
+        q.pop();
+    }
+    std::unordered_map<Object*, bool> seen;
+    auto add = [&](const ObjectRef& r) {
+        if (!r || !seen.emplace(r.get(), true).second) return;
+        KernelSnapshot::Objects::Fields f{r, r->signal, r->limit, r->notification, r->owner, r->recursion, 0};
+        if (r->type == ObjType::Thread) f.exit_code = static_cast<Thread&>(*r).exit_code;
+        o.fields.push_back(std::move(f));
+    };
+    o.fields.clear();
+    for (auto& [h, r] : o.handles) add(r);
+    for (auto& [a, e] : o.by_ptr) add(e.obj);
+    for (auto& e : o.timers) add(e.timer);
+}
+
+void RestoreObjects(const KernelSnapshot::Objects& o, int64_t shift, const std::function<void()>& locked) {
+    std::scoped_lock all(g_dispatch, g_handles_lock, g_ptr_lock, g_timer_lock, g_dpc_lock);
+    if (locked) locked();
+    g_handles = o.handles;
+    g_next_handle = o.next_handle;
+    g_by_ptr = o.by_ptr;
+    g_serial = o.serial;
+    for (const auto& f : o.fields) {
+        Object& r = *f.obj;
+        r.signal = f.signal;
+        r.limit = f.limit;
+        r.notification = f.notification;
+        r.owner = f.owner;
+        r.recursion = f.recursion;
+        if (r.type == ObjType::Thread) static_cast<Thread&>(r).exit_code = f.exit_code;
+    }
+    // the clock the deadlines are on stands still for the guest, so what was left of each is left now
+    g_timers = {};
+    for (TimerEntry e : o.timers) {
+        e.deadline += shift;
+        g_timers.push(e);
+    }
+    g_timer_seq = o.timer_seq;
+    g_seq = o.seq;
+    g_dpcs = o.dpcs;
+    g_cv.notify_all();
+    g_timer_cv.notify_all();
+    g_dpc_cv.notify_all();
 }
 
 }  // namespace kernel

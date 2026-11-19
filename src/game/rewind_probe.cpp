@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "core/log.h"
+#include "game/rewind.h"
 #include "kernel/kernel.h"
 #include "kernel/memory.h"
 #include "xdk/hle.h"
@@ -289,17 +290,24 @@ X86_FUNC(sub_000183A0) {
         LOGI("rewind: probe on, a snapshot every %d s", g.secs);
         return true;
     }();
-    if (on && kernel::R32(ctx.esp) == kFrameReturn) {
-        const auto now = Clock::now();
-        if (!g.started) {
-            g.started = true;
-            g.origin = g.last = g.last_frame = g.next_try = now;
+    if ((on || snapback::Enabled()) && kernel::R32(ctx.esp) == kFrameReturn) {
+        if (on) {
+            const auto now = Clock::now();
+            if (!g.started) {
+                g.started = true;
+                g.origin = g.last = g.last_frame = g.next_try = now;
+            }
+            g.frames++;
+            g.frames_since++;
+            g.dt_sum_ms += Ms(now - g.last_frame);
+            g.last_frame = now;
+            if (now - g.last >= std::chrono::seconds(g.secs) && now >= g.next_try) Take(ctx);
         }
-        g.frames++;
-        g.frames_since++;
-        g.dt_sum_ms += Ms(now - g.last_frame);
-        g.last_frame = now;
-        if (now - g.last >= std::chrono::seconds(g.secs) && now >= g.next_try) Take(ctx);
+        if (snapback::Enabled()) {
+            // the native stack in use here, the same at every call of this: a restore only goes back to the same call chain
+            kernel::Thread* self = kernel::Current();
+            snapback::Frame(ctx, self && self->host_base ? self->host_base - uintptr_t(__builtin_frame_address(0)) : 0);
+        }
     }
     __imp__sub_000183A0(ctx, base);
 }

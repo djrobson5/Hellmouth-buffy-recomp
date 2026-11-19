@@ -10,6 +10,7 @@
 #include "app/app.h"
 #include "kernel/crypto.h"
 #include "kernel/exports.h"
+#include "kernel/rewind.h"
 #include "xbe/xbe.h"
 
 namespace kernel {
@@ -99,6 +100,15 @@ void Freeze(bool on) {
 }
 
 bool Frozen() { return g_frozen_at.load() != 0; }
+
+Clocks CaptureClocks() { return {SteadyNs(), GuestNs(), x86_tsc_ns()}; }
+
+int64_t RestoreClocks(const Clocks& c) {
+    const int64_t back = GuestNs() - c.guest_ns;
+    g_frozen_total += back;  // absolute, from the snapshot's reading: a second restore of one snapshot does not drift
+    x86_set_tsc_ns(c.tsc_ns);
+    return back;
+}
 
 uint32_t g_tick_count_va = 0;
 uint32_t g_launch_data_page_va = 0;

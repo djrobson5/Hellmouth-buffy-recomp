@@ -58,3 +58,17 @@ What this port changed:
   The clock, vertical blank (`xdk/d3d8.cpp`), DPC, timer, pad poller (`xdk/xapi.cpp`), sound pump and mixer (`xdk/dsound.cpp`) threads use it.
 - `sdk/runtime/kernel/memory.cpp`, `memory.h`: `CaptureSnapshot` copies every committed range, the allocated part of the
   physical window (once) and the allocator tables.
+- `sdk/runtime/kernel/rewind.h`, `rewind.cpp`, `objects.cpp`, `files.cpp`, `threads.cpp`, `xboxkrnl.cpp`, `memory.cpp`, `cpu/dispatch.cpp`: a restore
+  of a snapshot, for a game that rewinds in the process (`src/game/rewind.cpp`). `mem::RestoreSnapshot` makes the commit state and the
+  allocator tables the snapshot's and copies the bytes back. `CaptureKernel` and `RestoreKernel` keep the handle table (the objects it names
+  stay alive), the pointer table, each object's signal, owner and recursion, the open files' positions and directory listings, the
+  timers and DPCs (their deadlines on the steady clock moved by the time between the two), each thread's context and APCs, and the
+  guest clock and time stamp counter (set from the snapshot's absolute reading). `PlanRestore` compares the threads with the snapshot's
+  and refuses before anything changes; a thread whose start routine the game names (a sound stream's) may be stopped (it leaves at its
+  next `SuspendPoint` without writing guest memory) or started again from its entry, as the same `Thread`, with the same stack and handle.
+  The timer, DPC and sound pump threads now enter the host writer gate before they take an item, so none is held across a restore.
+- `sdk/runtime/xdk/rewind.h`, `d3d8.cpp`, `dsound.cpp`: `CaptureDevice` and `RestoreDevice` copy the host's Direct3D state (shader tables, `g_state`,
+  surfaces, the immediate mode and user pointer vertex state; three function statics moved to file scope for it), `CaptureSound` and
+  `RestoreSound` the voices and the callbacks waiting. `gpu::Backend::ResetResources` (no-op by default; the Vulkan backend drops its
+  textures and targets after the GPU is idle, the threaded renderer forwards it) makes everything made from guest memory again.
+

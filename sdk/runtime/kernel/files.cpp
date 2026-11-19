@@ -10,6 +10,7 @@
 #include "kernel/disc.h"
 #include "kernel/kernel.h"
 #include "kernel/exports.h"
+#include "kernel/rewind.h"
 
 namespace fs = std::filesystem;
 
@@ -858,6 +859,45 @@ KERNEL_EXPORT(215, NtQuerySymbolicLinkObject, 3) {
     std::memcpy(HostPtr(R32(str + 4)), t.data(), t.size());
     W16(str, uint16_t(t.size()));
     return kSuccess;
+}
+
+// ---- the rewind: where each open file reads next, and each directory listing (kernel/rewind.h). Files on the disk are not
+// put back: what the game wrote stays written.
+
+struct KernelSnapshot::Files {
+    struct One {
+        std::shared_ptr<File> f;
+        uint64_t pos;
+        std::vector<fs::directory_entry> entries;
+        std::vector<const Disc::Entry*> disc_entries;
+        size_t next;
+        bool listed;
+    };
+    std::vector<One> files;
+};
+
+void CaptureFiles(KernelSnapshot& snap, const std::vector<ObjectRef>& handles) {
+    if (!snap.files) snap.files = std::make_shared<KernelSnapshot::Files>();
+    KernelSnapshot::Files& out = *snap.files;
+    out.files.clear();
+    for (const ObjectRef& o : handles) {
+        if (!o || o->type != ObjType::File) continue;
+        auto f = std::static_pointer_cast<File>(o);
+        std::lock_guard<std::mutex> lock(f->io);
+        out.files.push_back({f, f->pos, f->entries, f->disc_entries, f->next, f->listed});
+    }
+}
+
+void RestoreFiles(const KernelSnapshot::Files& in) {
+    for (const auto& one : in.files) {
+        File& f = *one.f;
+        std::lock_guard<std::mutex> lock(f.io);
+        f.pos = one.pos;
+        f.entries = one.entries;
+        f.disc_entries = one.disc_entries;
+        f.next = one.next;
+        f.listed = one.listed;
+    }
 }
 
 }  // namespace kernel

@@ -80,6 +80,10 @@ struct Snapshot {
 };
 // Fills 'out', keeping its buffer when it is big enough. The caller holds the guest still.
 void CaptureSnapshot(Snapshot& out);
+// Puts the guest's memory back as 'in' held it: pages committed now and not then are decommitted, pages missing are
+// committed, the allocator tables are the snapshot's and every captured range is copied back. The caller holds the guest
+// still. Returns the bytes copied.
+uint64_t RestoreSnapshot(const Snapshot& in);
 
 struct Stats {
     uint32_t total_pages, available_pages, virtual_committed, contiguous_used, system_used;

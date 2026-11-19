@@ -185,7 +185,9 @@ struct Thread : Object {
     std::atomic<uint32_t> k_esp{0}, k_ret{0};  // guest esp at the call that blocked, and the return address on it
     std::atomic<uintptr_t> host_sp{0};         // native stack pointer there
     uintptr_t host_base = 0;                   // top of this thread's native stack
-    uint32_t start_routine = 0, system_routine = 0;
+    uint32_t start_routine = 0, system_routine = 0, start_context = 0;
+    std::atomic<bool> doomed{false};  // the rewind stops this thread: it leaves at its next SuspendPoint, touching no guest memory
+    std::atomic<bool> exited{false};  // set when it has left that way
     std::atomic<int> cs_held{0}, locks_held{0};  // guest critical sections and the game's own locks the thread holds
     Thread() : Object(ObjType::Thread) {}
 };

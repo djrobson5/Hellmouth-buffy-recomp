@@ -7,6 +7,7 @@
 #include <shared_mutex>
 
 #include "kernel/kernel.h"
+#include "kernel/rewind.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -224,6 +225,7 @@ void StartThread(ThreadRef t) {
         }
         t->start_routine = si.start_routine;
         t->system_routine = si.system_routine;
+        t->start_context = si.start_context;
         t->kstate = Thread::kRunning;
         SuspendPoint();  // a thread that starts while the guest is held waits for it to be let go
         LOGI("thread %X starts at %08X (%08X, %08X)", t->id, si.system_routine ? si.system_routine : si.start_routine,
@@ -302,23 +304,40 @@ void LeaveBlocked() {
     if (Thread* t = Current()) t->kstate = Thread::kRunning;
 }
 
+// a thread the rewind stops leaves without a word reaching guest memory (ExitThread would mark the thread's object, which
+// the memory being put back may hold something else at)
+[[noreturn]] static void QuietExit(Thread& t) {
+    LOGI("thread %X stopped by the rewind", t.id);
+    Unregister(&t);
+    t.exited = true;
+    t_current.reset();
+#ifdef _WIN32
+    ::ExitThread(0);
+#else
+    pthread_exit(nullptr);
+#endif
+}
+
 void SuspendPoint() {
     Thread* t = Current();
     if (!t) return;
+    if (t->doomed.load()) QuietExit(*t);
     if (g_hold.load(std::memory_order_acquire) && g_hold_owner.load() != t) {
         EnterBlocked(Thread::kParked, __builtin_frame_address(1));  // the kernel call's frame, as where it blocks
         {
             std::unique_lock<std::mutex> lock(g_hold_lock);
-            g_hold_cv.wait(lock, [] { return !g_hold.load(); });
+            g_hold_cv.wait(lock, [&] { return !g_hold.load() || t->doomed.load(); });
         }
+        if (t->doomed.load()) QuietExit(*t);
         t->kstate = Thread::kRunning;
     }
     if (t->suspend.load() <= 0) return;
     EnterBlocked(Thread::kParked, __builtin_frame_address(1));
     {
         std::unique_lock<std::mutex> lock(t->apc_lock);
-        t->resume_cv.wait(lock, [&] { return t->suspend.load() <= 0; });
+        t->resume_cv.wait(lock, [&] { return t->suspend.load() <= 0 || t->doomed.load(); });
     }
+    if (t->doomed.load()) QuietExit(*t);
     t->kstate = Thread::kRunning;
 }
 
@@ -395,6 +414,100 @@ bool RunApcs(Thread& t) {
         ran = true;
     }
     return ran;
+}
+
+// ---- the rewind: the threads' part of a snapshot and its restore (kernel/rewind.h)
+
+static void CopyContext(X86Context& to, const X86Context& from) {
+    void* host = to.host;  // runtime owned: the thread's own
+    uint32_t handle = to.thread_handle;
+    to = from;
+    to.host = host;
+    to.thread_handle = handle;
+}
+
+void CaptureThreads(std::vector<ThreadSnap>& out, X86Context& main_ctx, uint64_t main_depth) {
+    out.clear();
+    for (const ThreadRef& t : Threads()) {
+        out.emplace_back();
+        ThreadSnap& s = out.back();
+        s.t = t;
+        s.id = t->id;
+        s.start = t->start_routine;
+        s.system_routine = t->system_routine;
+        s.start_context = t->start_context;
+        s.suspend = t->suspend.load();
+        s.cs = t->cs_held.load();
+        s.locks = t->locks_held.load();
+        if (t.get() == Current()) {
+            s.main = true;
+            s.ctx = main_ctx;
+            s.esp = main_ctx.esp;
+            s.ret = R32(main_ctx.esp);
+            s.depth = main_depth;
+        } else {
+            if (t->ctx) s.ctx = *t->ctx;
+            s.esp = t->k_esp.load();
+            s.ret = t->k_ret.load();
+            const uintptr_t sp = t->host_sp.load();
+            s.depth = t->host_base && sp ? t->host_base - sp : 0;
+        }
+        std::lock_guard<std::mutex> lock(t->apc_lock);
+        s.apcs = t->apcs;
+    }
+    std::sort(out.begin(), out.end(), [](const ThreadSnap& a, const ThreadSnap& b) { return a.id < b.id; });
+}
+
+bool StopThreads(const std::vector<ThreadRef>& threads, int timeout_ms) {
+    for (const ThreadRef& t : threads) t->doomed = true;
+    {
+        std::lock_guard<std::mutex> lock(g_hold_lock);  // a thread parked in the hold sees it at once
+    }
+    g_hold_cv.notify_all();
+    for (const ThreadRef& t : threads) {
+        std::lock_guard<std::mutex> lock(t->apc_lock);
+        t->resume_cv.notify_all();
+    }
+    const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    for (;;) {
+        bool all = true;
+        for (const ThreadRef& t : threads) all = all && t->exited.load();
+        if (all) return true;
+        if (std::chrono::steady_clock::now() >= until) {
+            for (const ThreadRef& t : threads)  // a thread still there stays: the restore is given up
+                if (!t->exited.load()) t->doomed = false;
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
+    }
+}
+
+void RestoreThreadState(const ThreadSnap& s) {
+    Thread& t = *s.t;
+    if (t.ctx) CopyContext(*t.ctx, s.ctx);
+    {
+        std::lock_guard<std::mutex> lock(t.apc_lock);
+        t.apcs = s.apcs;
+        t.suspend = s.suspend;
+        t.resume_cv.notify_all();
+    }
+    t.cs_held = s.cs;
+    t.locks_held = s.locks;
+}
+
+void RestartThread(const ThreadSnap& s) {
+    Thread& t = *s.t;
+    t.doomed = false;
+    t.exited = false;
+    t.kstate = Thread::kStarting;
+    t.suspend = s.suspend;
+    t.cs_held = 0;
+    t.locks_held = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_start_lock);
+        g_start[&t] = {s.system_routine, s.start, s.start_context};
+    }
+    StartThread(s.t);
 }
 
 }  // namespace kernel

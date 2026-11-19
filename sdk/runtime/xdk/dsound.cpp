@@ -16,6 +16,7 @@
 #include "xbe/xbe.h"
 #include "xdk/hle.h"
 #include "xdk/layout.h"
+#include "xdk/rewind.h"
 
 using namespace kernel;
 
@@ -525,15 +526,19 @@ void Start() {
     StartHostThread("dsound", [](X86Context& ctx) {
         constexpr int64_t kPumpMs = 250;
         for (;;) {
-            std::vector<Done> done;
             {
                 std::unique_lock<std::recursive_mutex> lock(g_lock);
                 g_done_cv.wait_for(lock, std::chrono::milliseconds(50));
                 if (NowMs() - g_pumped < kPumpMs) continue;
+            }
+            // the gate before the callbacks are taken: taken while the guest is held, they would run after a restore that did not know of them
+            HostWriter writing;
+            std::vector<Done> done;
+            {
+                std::lock_guard<std::recursive_mutex> lock(g_lock);
                 done.assign(g_done.begin(), g_done.end());
                 g_done.clear();
             }
-            HostWriter writing;
             Run(ctx, done);
         }
     });
@@ -1179,3 +1184,40 @@ STREAM(SetEG, 2) { return 0; }
 STREAM(SetOutputBuffer, 2) { return 0; }
 // (this, desc, stream out, outer unknown): the device method form of DirectSoundCreateStream
 HLE_STDCALL(IDirectSound_CreateSoundStream, 4) { return NewStream(a[1], a[2]); }
+
+// ---- the rewind (xdk/rewind.h): the voices and the callbacks waiting to run. Their memory is the guest's, and put back with it.
+
+namespace xdk {
+
+struct SoundSnapshot::D {
+    std::map<uint32_t, Voice> voices;
+    std::deque<Done> done;
+    float listener[3], front[3], top[3];
+    bool reverb_set = false;
+};
+SoundSnapshot::SoundSnapshot() = default;
+SoundSnapshot::~SoundSnapshot() = default;
+
+void CaptureSound(SoundSnapshot& out) {
+    if (!out.d) out.d = std::make_unique<SoundSnapshot::D>();
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    out.d->voices = g_voices;
+    out.d->done = g_done;
+    std::memcpy(out.d->listener, g_listener, sizeof g_listener);
+    std::memcpy(out.d->front, g_front, sizeof g_front);
+    std::memcpy(out.d->top, g_top, sizeof g_top);
+    out.d->reverb_set = g_reverb_set;
+}
+
+void RestoreSound(const SoundSnapshot& in) {
+    if (!in.d) return;
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    g_voices = in.d->voices;
+    g_done = in.d->done;
+    std::memcpy(g_listener, in.d->listener, sizeof g_listener);
+    std::memcpy(g_front, in.d->front, sizeof g_front);
+    std::memcpy(g_top, in.d->top, sizeof g_top);
+    g_reverb_set = in.d->reverb_set;
+}
+
+}  // namespace xdk

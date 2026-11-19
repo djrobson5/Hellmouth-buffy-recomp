@@ -21,6 +21,7 @@
 #include "gpu/backend.h"
 #include "gpu/texture.h"
 #include "gpu/vertex.h"
+#include "xdk/rewind.h"
 
 namespace gpu::vk {
 bool Probe();  // gpu/vk_probe.cpp
@@ -1202,6 +1203,11 @@ HLE_STDCALL(D3DDevice_DeletePixelShader, 1) {
     return 0;
 }
 
+// pixel shaders made from the definition the title's own object points at, by handle (the rewind keeps and puts back a copy)
+namespace {
+std::unordered_map<uint32_t, std::shared_ptr<gpu::PixelShader>> g_ps_made;
+}  // namespace
+
 HLE_STDCALL(D3DDevice_SetPixelShader, 1) {
     DeviceLock lock;
     g_state.ps = nullptr;
@@ -1211,9 +1217,8 @@ HLE_STDCALL(D3DDevice_SetPixelShader, 1) {
         g_state.ps = it->second;
     } else if (XDK_PixelShader_Definition != xdk::kUnknown) {
         // made by library code the title inlined: the object points at its definition, handles are reused
-        static std::unordered_map<uint32_t, std::shared_ptr<gpu::PixelShader>> made;
         const void* def = HostPtr(R32(a[0] + XDK_PixelShader_Definition));
-        auto& ps = made[a[0]];
+        auto& ps = g_ps_made[a[0]];
         if (!ps || std::memcmp(ps->def, def, sizeof(ps->def))) {
             ps = std::make_shared<gpu::PixelShader>();
             ps->handle = a[0];
@@ -1420,20 +1425,23 @@ static std::string ImVertex(uint32_t v) {
     return s;
 }
 
+struct Made {
+    std::shared_ptr<gpu::VertexShader> from, vs;
+};
+// the render thread tells shaders apart by pointer: one object per program and slot set, the program kept alive
+std::map<std::pair<gpu::VertexShader*, uint32_t>, Made> g_made;
+// the same for inline array vertices: the bound program with its inputs packed
+std::map<gpu::VertexShader*, std::shared_ptr<gpu::VertexShader>> g_packed_of;
+
 // draws the open primitive: the slots it wrote are FLOAT4 inputs of the bound program, or of the fixed pipeline
 void EndPrimitive() {
-    struct Made {
-        std::shared_ptr<gpu::VertexShader> from, vs;
-    };
-    // the render thread tells shaders apart by pointer: one object per program and slot set, the program kept alive
-    static std::map<std::pair<gpu::VertexShader*, uint32_t>, Made> made;
     static std::vector<float> packed;
     uint32_t prim = g_im_prim, count = uint32_t(g_im_vertices.size() / 64), handle = g_state.vs_handle;
     g_im_prim = 0;
     if (!prim || !count) return;
     if (!(handle & 1) && (handle & 0xE) == 4) LOG_FIRST(1, "d3d: pretransformed immediate mode vertices are not supported");
     auto bound = g_state.vs, from = handle & 1 ? bound : nullptr;
-    Made& m = made[{from.get(), g_im_mask}];
+    Made& m = g_made[{from.get(), g_im_mask}];
     if (!m.vs) {
         m.from = from;
         m.vs = std::make_shared<gpu::VertexShader>();
@@ -1477,8 +1485,7 @@ void EndArrays() {
         // inline vertices carry every input the shader reads, packed in register order, whatever stream it names
         uint32_t bytes = uint32_t(g_arr_inline.size()) * 4;
         if (g_state.vs_handle & 1 && g_state.vs) {
-            static std::map<gpu::VertexShader*, std::shared_ptr<gpu::VertexShader>> packed_of;
-            auto& packed = packed_of[g_state.vs.get()];
+            auto& packed = g_packed_of[g_state.vs.get()];
             if (!packed) {
                 packed = std::make_shared<gpu::VertexShader>(*g_state.vs);
                 packed->stream_stride = {};
@@ -1777,3 +1784,103 @@ HLE_STDCALL(D3DDevice_End, 0) {
     SetDev(XDK_CDevice_Flags, Dev(XDK_CDevice_Flags) & ~0x1800u);
     return 0;
 }
+
+// ---- the rewind (xdk/rewind.h)
+
+namespace xdk {
+
+struct DeviceSnapshot::D {
+    gpu::State state;
+    std::unordered_map<uint32_t, std::shared_ptr<gpu::VertexShader>> vs;
+    std::map<uint32_t, d3d::LoadedProgram> vs_memory;
+    std::map<std::pair<uint32_t, uint32_t>, std::shared_ptr<gpu::VertexShader>> vs_selected;
+    std::unordered_map<uint32_t, std::shared_ptr<gpu::PixelShader>> ps, ps_made;
+    std::array<uint32_t, 3> buffers{};
+    uint32_t buffer_count = 0, depth = 0, scratch_push = 0, scratch_size = 0, walk = 0;
+    bool title_surfaces = false, own_constants = false;
+    float transforms[10][16];
+    // user pointer vertices
+    uint32_t up_ring = 0, up_pos = 0, up_header = 0, up_fence[2] = {}, push_begin = 0;
+    // immediate mode
+    std::map<std::pair<gpu::VertexShader*, uint32_t>, d3d::Made> made;
+    std::map<gpu::VertexShader*, std::shared_ptr<gpu::VertexShader>> packed_of;
+    uint32_t im_prim = 0, im_mask = 0, vsc_load = 0;
+    std::vector<uint16_t> arr_indices;
+    std::vector<std::pair<uint32_t, uint32_t>> arr_ranges;
+    std::vector<uint32_t> arr_inline;
+    float im_attr[64];
+    std::vector<float> im_vertices;
+};
+DeviceSnapshot::DeviceSnapshot() = default;
+DeviceSnapshot::~DeviceSnapshot() = default;
+
+void CaptureDevice(DeviceSnapshot& out) {
+    if (!out.d) out.d = std::make_unique<DeviceSnapshot::D>();
+    DeviceSnapshot::D& d = *out.d;
+    std::lock_guard<std::recursive_mutex> lock(d3d::g_lock);
+    if (d3d::g_backend) d3d::g_backend->Flush();  // what was drawn is in guest memory before it is copied
+    d.state = d3d::g_state;
+    d.vs = d3d::g_vs;
+    d.vs_memory = d3d::g_vs_memory;
+    d.vs_selected = d3d::g_vs_selected;
+    d.ps = d3d::g_ps;
+    d.ps_made = g_ps_made;
+    d.buffers = d3d::g_buffers;
+    d.buffer_count = d3d::g_buffer_count;
+    d.depth = d3d::g_depth;
+    d.scratch_push = d3d::g_scratch_push;
+    d.scratch_size = d3d::g_scratch_size;
+    d.walk = d3d::g_walk;
+    d.title_surfaces = d3d::g_title_surfaces;
+    d.own_constants = d3d::g_own_constants;
+    std::memcpy(d.transforms, d3d::g_dev_transforms, sizeof d.transforms);
+    d.up_ring = g_up_ring, d.up_pos = g_up_pos, d.up_header = g_up_header, d.push_begin = g_push_begin;
+    d.up_fence[0] = g_up_fence[0], d.up_fence[1] = g_up_fence[1];
+    d.made = d3d::g_made;
+    d.packed_of = d3d::g_packed_of;
+    d.im_prim = d3d::g_im_prim, d.im_mask = d3d::g_im_mask, d.vsc_load = d3d::g_vsc_load;
+    d.arr_indices = d3d::g_arr_indices;
+    d.arr_ranges = d3d::g_arr_ranges;
+    d.arr_inline = d3d::g_arr_inline;
+    std::memcpy(d.im_attr, d3d::g_im_attr, sizeof d.im_attr);
+    d.im_vertices = d3d::g_im_vertices;
+}
+
+void RestoreDevice(const DeviceSnapshot& in) {
+    if (!in.d) return;
+    const DeviceSnapshot::D& d = *in.d;
+    std::lock_guard<std::recursive_mutex> lock(d3d::g_lock);
+    d3d::g_state = d.state;
+    d3d::g_vs = d.vs;
+    d3d::g_vs_memory = d.vs_memory;
+    d3d::g_vs_selected = d.vs_selected;
+    d3d::g_ps = d.ps;
+    g_ps_made = d.ps_made;
+    d3d::g_buffers = d.buffers;
+    d3d::g_buffer_count = d.buffer_count;
+    d3d::g_depth = d.depth;
+    d3d::g_scratch_push = d.scratch_push;
+    d3d::g_scratch_size = d.scratch_size;
+    d3d::g_walk = d.walk;
+    d3d::g_title_surfaces = d.title_surfaces;
+    d3d::g_own_constants = d.own_constants;
+    std::memcpy(d3d::g_dev_transforms, d.transforms, sizeof d.transforms);
+    g_up_ring = d.up_ring, g_up_pos = d.up_pos, g_up_header = d.up_header, g_push_begin = d.push_begin;
+    g_up_fence[0] = d.up_fence[0], g_up_fence[1] = d.up_fence[1];
+    d3d::g_made = d.made;
+    d3d::g_packed_of = d.packed_of;
+    d3d::g_im_prim = d.im_prim, d3d::g_im_mask = d.im_mask, d3d::g_vsc_load = d.vsc_load;
+    d3d::g_arr_indices = d.arr_indices;
+    d3d::g_arr_ranges = d.arr_ranges;
+    d3d::g_arr_inline = d.arr_inline;
+    std::memcpy(d3d::g_im_attr, d.im_attr, sizeof d.im_attr);
+    d3d::g_im_vertices = d.im_vertices;
+    g_last_draw_gen = ~0ull;  // the next draw sends its state whole
+    core::g_state_gen += 2;
+    if (d3d::g_backend) {
+        d3d::g_backend->Flush();
+        d3d::g_backend->ResetResources();
+    }
+}
+
+}  // namespace xdk

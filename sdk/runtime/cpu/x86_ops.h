@@ -59,6 +59,8 @@ void x86_kernel(X86Context& ctx, uint8_t* base, uint32_t ordinal);
 void x86_priv(X86Context& ctx, uint32_t va, const char* what);
 uint32_t x86_trace(X86Context& ctx, uint32_t va, uint32_t ret);  // ret 0 on entry, returns the return address
 uint64_t x86_rdtsc();
+int64_t x86_tsc_ns();  // the counter in nanoseconds
+void x86_set_tsc_ns(int64_t ns);
 void x86_cpuid(X86Context& ctx);
 
 inline void x87_push(X86Context& ctx, double v) {
