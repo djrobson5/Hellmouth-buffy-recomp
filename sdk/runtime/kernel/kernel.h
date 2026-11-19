@@ -178,6 +178,15 @@ struct Thread : Object {
     std::deque<std::array<uint32_t, 4>> apcs;  // routine, arg1, arg2, arg3
     std::condition_variable resume_cv;
     X86Context* ctx = nullptr;
+    // Where the thread is, for a game that snapshots guest memory (the rewind probe): the thread tells it at each kernel
+    // wait, delay and yield and at SuspendPoint, so another thread can read it without touching this one's context
+    enum : uint8_t { kStarting, kRunning, kWaiting, kDelaying, kYielding, kSpinning, kParked };
+    std::atomic<uint8_t> kstate{kStarting};
+    std::atomic<uint32_t> k_esp{0}, k_ret{0};  // guest esp at the call that blocked, and the return address on it
+    std::atomic<uintptr_t> host_sp{0};         // native stack pointer there
+    uintptr_t host_base = 0;                   // top of this thread's native stack
+    uint32_t start_routine = 0, system_routine = 0;
+    std::atomic<int> cs_held{0}, locks_held{0};  // guest critical sections and the game's own locks the thread holds
     Thread() : Object(ObjType::Thread) {}
 };
 using ThreadRef = std::shared_ptr<Thread>;
@@ -197,7 +206,28 @@ void SetGuestAffinity(uint64_t mask);
 [[noreturn]] void ExitThread(uint32_t code);
 void Resume(Thread& t);
 uint32_t Suspend(Thread& t);  // previous count; another thread stops at its next kernel wait, delay or yield
-void SuspendPoint();           // blocks the current thread while it is suspended
+void SuspendPoint();           // blocks the current thread while it is suspended, or while the guest threads are held
+// The current thread says it is blocking in a kernel call (a Thread::k* state), with where it is; LeaveBlocked says it
+// runs guest code again, and comes before the SuspendPoint that ends the call
+void EnterBlocked(uint8_t state, void* frame);  // frame: __builtin_frame_address(0) of the kernel call's own function
+void LeaveBlocked();
+// Holding the guest still, for a snapshot of its memory. Threads of the host that write guest memory (the clock, the
+// vertical blank, the sound pump, the pad poller, DPCs, timers) run inside a HostWriter; StopHostWriters waits for those
+// to end and keeps new ones out, false when they did not end in time. QuiesceGuestThreads then asks every guest thread
+// but the caller to stop at its next SuspendPoint, and returns the ones that did not within the time (it still holds
+// the others); ResumeGuestThreads and StartHostWriters undo them, in that order.
+struct HostWriter {
+    HostWriter();
+    ~HostWriter();
+    HostWriter(const HostWriter&) = delete;
+    HostWriter& operator=(const HostWriter&) = delete;
+    bool owns = false, counted = false;
+};
+void EnableHostWriterGate();  // until then a HostWriter does nothing
+bool StopHostWriters(int timeout_ms);
+void StartHostWriters();
+std::vector<ThreadRef> QuiesceGuestThreads(int timeout_ms);
+void ResumeGuestThreads();
 // set by a game: told on the calling thread around each kernel call that waits or gives up the processor (waits,
 // delays, yields, file reads) and each frame shown (D3DDevice_Swap): false before, true after. Null: nothing told.
 extern void (*g_blocking)(bool done);

@@ -232,6 +232,13 @@ public:
         return n;
     }
 
+    size_t Entries() const { return free_.size() + used_.size(); }
+
+    template <typename F>
+    void ForUsed(F&& f) const {
+        for (auto& u : used_) f(u.first, u.second);
+    }
+
 private:
     void Take(uint32_t a, uint32_t size) {
         Remove(a, size);
@@ -449,12 +456,13 @@ uint32_t AllocationSize(uint32_t va) {
     return 0;
 }
 
+static uint32_t g_host_physical_next = kPhysicalSize;
+
 uint32_t AllocHostPhysical(uint32_t size, uint32_t align) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
-    static uint32_t next = kPhysicalSize;
-    uint32_t at = (next + align - 1) & ~(align - 1);
+    uint32_t at = (g_host_physical_next + align - 1) & ~(align - 1);
     if (at + size > kMappedPhysical || at + size < at) return 0;
-    next = at + size;
+    g_host_physical_next = at + size;
     return kContiguousBase | at;
 }
 
@@ -466,6 +474,93 @@ uint32_t PhysicalFromVirtual(uint32_t va) {
 uint32_t VirtualFromPhysical(uint32_t pa) {
     if (pa < kMappedPhysical) return kContiguousBase | pa;
     return pa;
+}
+
+struct Snapshot::Tables {
+    std::vector<uint8_t> committed;
+    Ranges contig, system, stacks, user;
+    std::map<uint32_t, uint32_t> stack_tops;
+    std::map<uint32_t, Reservation> reserved;
+    uint32_t host_physical_next = 0;
+};
+
+Snapshot::Snapshot() = default;
+Snapshot::~Snapshot() = default;
+
+uint64_t Snapshot::BytesOf(RangeKind k) const {
+    uint64_t n = 0;
+    for (const SnapshotRange& r : ranges)
+        if (r.kind == k) n += r.size;
+    return n;
+}
+
+void CaptureSnapshot(Snapshot& out) {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    // the tables first: what is allocated now is what is copied below
+    auto t = std::make_unique<Snapshot::Tables>();
+    t->committed = g_committed;
+    t->contig = g_contig;
+    t->system = g_system;
+    t->stacks = g_stacks;
+    t->user = g_user;
+    t->stack_tops = g_stack_tops;
+    t->reserved = g_reserved;
+    t->host_physical_next = g_host_physical_next;
+    uint64_t tb = t->committed.size() + 24ull * (t->contig.Entries() + t->system.Entries() + t->stacks.Entries() + t->user.Entries() +
+                                                 t->stack_tops.size());
+    for (auto& [a, r] : t->reserved) tb += 48 + r.commit.size();
+
+    out.ranges.clear();
+    auto add = [&](uint32_t va, uint32_t size, RangeKind kind) {
+        if (!size) return;
+        if (!out.ranges.empty()) {
+            SnapshotRange& last = out.ranges.back();
+            if (last.kind == kind && uint64_t(last.va) + last.size == va) {
+                last.size += size;
+                return;
+            }
+        }
+        out.ranges.push_back({va, size, kind, 0});
+    };
+    // committed pages, by address (the physical windows are never marked)
+    for (uint64_t p = 0; p < g_committed.size();) {
+        if (!g_committed[p]) {
+            p++;
+            continue;
+        }
+        uint64_t q = p;
+        while (q < g_committed.size() && g_committed[q]) q++;
+        uint32_t va = uint32_t(p << 12);
+        RangeKind kind = va >= kStackBase ? RangeKind::Stack : va >= kSystemBase ? RangeKind::System : RangeKind::User;
+        add(va, uint32_t((q - p) << 12), kind);
+        p = q;
+    }
+    // the physical window: the kernel's variables, what AllocContiguous gave out, the port's own buffers
+    std::vector<SnapshotRange> phys;
+    phys.push_back({kKernelDataBase, kKernelDataSize, RangeKind::Physical, 0});
+    g_contig.ForUsed([&](uint32_t va, uint32_t size) {
+        if (!phys.empty() && uint64_t(phys.back().va) + phys.back().size == va) phys.back().size += size;
+        else phys.push_back({va, size, RangeKind::Physical, 0});
+    });
+    if (g_host_physical_next > kPhysicalSize)
+        phys.push_back({kContiguousBase + kPhysicalSize, g_host_physical_next - kPhysicalSize, RangeKind::HostPhysical, 0});
+    out.ranges.insert(out.ranges.end(), phys.begin(), phys.end());
+    std::sort(out.ranges.begin(), out.ranges.end(), [](const SnapshotRange& a, const SnapshotRange& b) { return a.va < b.va; });
+
+    uint64_t total = 0;
+    for (SnapshotRange& r : out.ranges) {
+        r.offset = total;
+        total += r.size;
+    }
+    out.reused = out.capacity >= total && out.data;
+    if (!out.reused) {
+        out.capacity = total + total / 8;
+        out.data.reset(new uint8_t[out.capacity]);  // not zeroed: the copy writes every byte
+    }
+    out.data_bytes = total;
+    for (const SnapshotRange& r : out.ranges) std::memcpy(out.data.get() + r.offset, g_base + r.va, r.size);
+    out.tables = std::move(t);
+    out.table_bytes = tb;
 }
 
 Stats Query() {

@@ -361,6 +361,7 @@ void Deactivate(Voice& v) {
 
 void Render(float* out, uint32_t frames) {
     std::memset(out, 0, frames * 2 * sizeof(float));
+    HostWriter writing;
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     bool reverb = g_reverb_set && ReverbOn();
     if (reverb) g_send.assign(frames, 0.0f);
@@ -532,6 +533,7 @@ void Start() {
                 done.assign(g_done.begin(), g_done.end());
                 g_done.clear();
             }
+            HostWriter writing;
             Run(ctx, done);
         }
     });

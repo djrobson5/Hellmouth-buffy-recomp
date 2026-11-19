@@ -1,5 +1,7 @@
 #pragma once
 #include <cstdint>
+#include <memory>
+#include <vector>
 
 namespace mem {
 
@@ -53,6 +55,31 @@ void FreeStack(uint32_t top);
 
 uint32_t PhysicalFromVirtual(uint32_t va);
 uint32_t VirtualFromPhysical(uint32_t pa);
+
+// A copy of the guest's memory and of the tables that say what is allocated and committed, for a game that rewinds.
+// The physical window is copied once, though it shows twice; only what the allocators hand out is.
+enum class RangeKind : uint8_t { User, System, Stack, Physical, HostPhysical };
+struct SnapshotRange {
+    uint32_t va, size;
+    RangeKind kind;
+    uint64_t offset;  // into Snapshot::data
+};
+struct Snapshot {
+    struct Tables;
+    Snapshot();
+    ~Snapshot();
+    Snapshot(const Snapshot&) = delete;
+    Snapshot& operator=(const Snapshot&) = delete;
+    std::vector<SnapshotRange> ranges;  // by address
+    std::unique_ptr<uint8_t[]> data;
+    uint64_t data_bytes = 0, capacity = 0;
+    std::unique_ptr<Tables> tables;
+    uint64_t table_bytes = 0;
+    bool reused = false;  // the buffer of an earlier snapshot served again, with no new pages to touch
+    uint64_t BytesOf(RangeKind k) const;
+};
+// Fills 'out', keeping its buffer when it is big enough. The caller holds the guest still.
+void CaptureSnapshot(Snapshot& out);
 
 struct Stats {
     uint32_t total_pages, available_pages, virtual_committed, contiguous_used, system_used;

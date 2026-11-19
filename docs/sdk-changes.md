@@ -49,3 +49,12 @@ What this port changed:
 - `sdk/runtime/app/achievements.cpp`: built on macOS, with the note showing a picture where the game supplies one, and notes carried
   across the restart into a level. `sdk/runtime/app/app.h`, `overlay.cpp`, `sdk/runtime/gpu/vk.cpp`: `app::g_ui_picture` for those pictures.
 - `sdk/licenses/LiberationSans-OFL.txt`: new, the licence of the menu font.
+- `sdk/runtime/kernel/threads.cpp`, `kernel.h`, `objects.cpp`, `xboxkrnl.cpp`: for the rewind probe (`src/game/rewind_probe.cpp`).
+  Each `Thread` reports where it is (`kstate`, the guest esp and return address of the call that blocked it, its native
+  stack pointer, its start routine, the guest critical sections it holds) at `Wait`, `KeDelayExecutionThread`,
+  `NtYieldExecution` and `SuspendPoint`; the delay and yield now check `SuspendPoint` on the way out as well. A guest thread
+  can be held still with `QuiesceGuestThreads` (it stops at its next `SuspendPoint`), and the host threads that write guest
+  memory run inside a `HostWriter` that `StopHostWriters` waits for; the gate does nothing until `EnableHostWriterGate`.
+  The clock, vertical blank (`xdk/d3d8.cpp`), DPC, timer, pad poller (`xdk/xapi.cpp`), sound pump and mixer (`xdk/dsound.cpp`) threads use it.
+- `sdk/runtime/kernel/memory.cpp`, `memory.h`: `CaptureSnapshot` copies every committed range, the allocated part of the
+  physical window (once) and the allocator tables.

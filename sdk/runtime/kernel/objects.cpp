@@ -234,9 +234,11 @@ static uint32_t WaitFor(const std::vector<ObjectRef>& objs, bool wait_all, int64
 uint32_t Wait(const std::vector<ObjectRef>& objs, bool wait_all, int64_t timeout, bool alertable) {
     SuspendPoint();
     Blocking told;
+    EnterBlocked(Thread::kWaiting, __builtin_frame_address(0));
     int64_t t = WorkNow();
     uint32_t r = WaitFor(objs, wait_all, timeout, alertable);
     CountWait(WorkNow() - t);
+    LeaveBlocked();
     SuspendPoint();
     return r;
 }
@@ -333,6 +335,7 @@ void RunDpcs(X86Context& ctx) {
             d = g_dpcs.front();
             g_dpcs.pop_front();
         }
+        HostWriter writing;
         uint32_t dpc = d[0];
         G<uint8_t>(dpc + 2) = 0;  // Inserted
         uint32_t routine = R32(dpc + 0x0C), context = R32(dpc + 0x10);  // KDPC.DeferredRoutine and DeferredContext
@@ -378,6 +381,7 @@ static void TimerLoop() {
         g_timers.pop();
         auto it = g_timer_seq.find(e.timer.get());
         if (it == g_timer_seq.end() || it->second != e.seq) continue;
+        HostWriter writing;
         {
             std::lock_guard<std::mutex> dl(g_dispatch);
             SetSignal(*e.timer, 1);

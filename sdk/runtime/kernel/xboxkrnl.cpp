@@ -131,10 +131,13 @@ void InitKernelData() {
     std::thread([] {
         int64_t start = GuestNs();
         for (;;) {
-            int64_t ms = (GuestNs() - start) / 1000000;
-            W32(g_tick_count_va, uint32_t(ms));
-            PutSystemTime(DataAddress(120), InterruptTime());
-            PutSystemTime(DataAddress(154), uint64_t(Now100ns()));
+            {
+                HostWriter writing;
+                int64_t ms = (GuestNs() - start) / 1000000;
+                W32(g_tick_count_va, uint32_t(ms));
+                PutSystemTime(DataAddress(120), InterruptTime());
+                PutSystemTime(DataAddress(154), uint64_t(Now100ns()));
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }).detach();
@@ -164,6 +167,7 @@ KERNEL_EXPORT(277, RtlEnterCriticalSection, 1) {
     if (__atomic_add_fetch(lock_count, 1, __ATOMIC_SEQ_CST) == 0) {
         W32(cs + 0x18, me);
         W32(cs + 0x14, 1);
+        Current()->cs_held++;
         return 0;
     }
     if (R32(cs + 0x18) == me) {
@@ -174,6 +178,7 @@ KERNEL_EXPORT(277, RtlEnterCriticalSection, 1) {
     Wait({ev}, false, INT64_MAX, false);
     W32(cs + 0x18, me);
     W32(cs + 0x14, 1);
+    Current()->cs_held++;
     return 0;
 }
 
@@ -187,6 +192,7 @@ KERNEL_EXPORT(294, RtlLeaveCriticalSection, 1) {
         return 0;
     }
     W32(cs + 0x18, 0);
+    Current()->cs_held--;
     if (__atomic_sub_fetch(lock_count, 1, __ATOMIC_SEQ_CST) >= 0) SetEvent(*FromPointer(cs));
     return 0;
 }
@@ -198,6 +204,7 @@ KERNEL_EXPORT(306, RtlTryEnterCriticalSection, 1) {
     if (__atomic_compare_exchange_n(reinterpret_cast<int32_t*>(HostPtr(cs + 0x10)), &idle, 0, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
         W32(cs + 0x18, me);
         W32(cs + 0x14, 1);
+        Current()->cs_held++;
         return 1;
     }
     if (R32(cs + 0x18) != me) return 0;
@@ -291,19 +298,27 @@ KERNEL_EXPORT(99, KeDelayExecutionThread, 3) {
     SuspendPoint();
     Blocking told;
     if (interval == 0) {
+        EnterBlocked(Thread::kYielding, __builtin_frame_address(0));
         std::this_thread::yield();
+        LeaveBlocked();
+        SuspendPoint();
         return kSuccess;
     }
+    EnterBlocked(Thread::kDelaying, __builtin_frame_address(0));
     int64_t start = now();
     while (now() < deadline) {
         int64_t left = deadline - now();
         std::this_thread::sleep_for(std::chrono::nanoseconds(std::min<int64_t>(left, 2000000)));
         if (alertable && t && RunApcs(*t)) {
             CountSleep(now() - start);
+            LeaveBlocked();
+            SuspendPoint();
             return kUserApc;
         }
     }
     CountSleep(now() - start);
+    LeaveBlocked();
+    SuspendPoint();
     return kSuccess;
 }
 
@@ -870,7 +885,10 @@ KERNEL_EXPORT(92, KeAlertResumeThread, 1) { return kimpl_KeResumeThread(ctx, a);
 KERNEL_EXPORT(238, NtYieldExecution, 0) {
     SuspendPoint();
     Blocking told;
+    EnterBlocked(Thread::kYielding, __builtin_frame_address(0));
     std::this_thread::yield();
+    LeaveBlocked();
+    SuspendPoint();
     return kSuccess;
 }
 

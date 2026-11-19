@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <shared_mutex>
 
 #include "kernel/kernel.h"
 
@@ -22,6 +23,32 @@ thread_local ThreadRef t_current;
 std::mutex g_threads_lock;
 std::vector<ThreadRef> g_threads;
 std::atomic<uint32_t> g_next_id{0x10};
+
+// top of the calling thread's native stack, 0 where there is no way to ask
+uintptr_t HostStackBase() {
+#if defined(_WIN32)
+    return 0;
+#elif defined(__APPLE__)
+    return uintptr_t(pthread_get_stackaddr_np(pthread_self()));
+#else
+    pthread_attr_t attr;
+    void* addr = nullptr;
+    size_t size = 0;
+    if (pthread_getattr_np(pthread_self(), &attr)) return 0;
+    pthread_attr_getstack(&attr, &addr, &size);
+    pthread_attr_destroy(&attr);
+    return uintptr_t(addr) + size;
+#endif
+}
+
+// holding the guest still (QuiesceGuestThreads)
+std::shared_timed_mutex g_host_gate;
+std::atomic<bool> g_gate_on{false};
+std::atomic<bool> g_hold{false};
+std::atomic<Thread*> g_hold_owner{nullptr};
+std::mutex g_hold_lock;
+std::condition_variable g_hold_cv;
+thread_local int t_writer_depth = 0;
 
 // guest structures per thread
 constexpr uint32_t kKpcrSize = 0x400;
@@ -182,6 +209,7 @@ void StartThread(ThreadRef t) {
         char name[32];
         std::snprintf(name, sizeof(name), "guest %X", t->id);
         NameHostThread(name);
+        t->host_base = HostStackBase();
         X86Context ctx;
         InitContext(*t, ctx);
         {
@@ -194,6 +222,10 @@ void StartThread(ThreadRef t) {
             si = g_start[t.get()];
             g_start.erase(t.get());
         }
+        t->start_routine = si.start_routine;
+        t->system_routine = si.system_routine;
+        t->kstate = Thread::kRunning;
+        SuspendPoint();  // a thread that starts while the guest is held waits for it to be let go
         LOGI("thread %X starts at %08X (%08X, %08X)", t->id, si.system_routine ? si.system_routine : si.start_routine,
              si.start_routine, si.start_context);
         uint32_t code;
@@ -217,6 +249,8 @@ void StartHostThread(const char* name, std::function<void(X86Context&)> fn) {
     Spawn([t, fn, n] {
         t_current = t;
         NameHostThread(n.c_str());
+        t->host_base = HostStackBase();
+        t->kstate = Thread::kRunning;
         X86Context ctx;
         InitContext(*t, ctx);
         fn(ctx);
@@ -253,11 +287,86 @@ uint32_t Suspend(Thread& t) {
 
 void (*g_blocking)(bool done) = nullptr;
 
+void EnterBlocked(uint8_t state, void* frame) {
+    Thread* t = Current();
+    if (!t) return;
+    if (t->ctx) {
+        t->k_esp = t->ctx->esp;
+        t->k_ret = R32(t->ctx->esp);
+    }
+    t->host_sp = uintptr_t(frame);
+    t->kstate = state;
+}
+
+void LeaveBlocked() {
+    if (Thread* t = Current()) t->kstate = Thread::kRunning;
+}
+
 void SuspendPoint() {
     Thread* t = Current();
-    if (!t || t->suspend.load() <= 0) return;
-    std::unique_lock<std::mutex> lock(t->apc_lock);
-    t->resume_cv.wait(lock, [&] { return t->suspend.load() <= 0; });
+    if (!t) return;
+    if (g_hold.load(std::memory_order_acquire) && g_hold_owner.load() != t) {
+        EnterBlocked(Thread::kParked, __builtin_frame_address(1));  // the kernel call's frame, as where it blocks
+        {
+            std::unique_lock<std::mutex> lock(g_hold_lock);
+            g_hold_cv.wait(lock, [] { return !g_hold.load(); });
+        }
+        t->kstate = Thread::kRunning;
+    }
+    if (t->suspend.load() <= 0) return;
+    EnterBlocked(Thread::kParked, __builtin_frame_address(1));
+    {
+        std::unique_lock<std::mutex> lock(t->apc_lock);
+        t->resume_cv.wait(lock, [&] { return t->suspend.load() <= 0; });
+    }
+    t->kstate = Thread::kRunning;
+}
+
+void EnableHostWriterGate() { g_gate_on = true; }
+
+HostWriter::HostWriter() {
+    if (!g_gate_on.load(std::memory_order_relaxed)) return;
+    counted = true;
+    if (t_writer_depth++ == 0) {
+        g_host_gate.lock_shared();
+        owns = true;
+    }
+}
+
+HostWriter::~HostWriter() {
+    if (!counted) return;
+    t_writer_depth--;
+    if (owns) g_host_gate.unlock_shared();
+}
+
+bool StopHostWriters(int timeout_ms) {
+    return g_host_gate.try_lock_for(std::chrono::milliseconds(timeout_ms));
+}
+
+void StartHostWriters() { g_host_gate.unlock(); }
+
+std::vector<ThreadRef> QuiesceGuestThreads(int timeout_ms) {
+    g_hold_owner = Current();
+    g_hold.store(true, std::memory_order_release);  // before the states are read: a thread read as blocked stops when it leaves
+    const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    std::vector<ThreadRef> loose;
+    for (;;) {
+        loose.clear();
+        for (const ThreadRef& t : Threads())
+            if (t.get() != Current() && t->kstate.load() == Thread::kRunning) loose.push_back(t);
+        if (loose.empty() || std::chrono::steady_clock::now() >= until) break;
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
+    }
+    return loose;
+}
+
+void ResumeGuestThreads() {
+    {
+        std::lock_guard<std::mutex> lock(g_hold_lock);
+        g_hold.store(false);
+    }
+    g_hold_cv.notify_all();
+    g_hold_owner = nullptr;
 }
 
 void QueueApc(Thread& t, uint32_t routine, uint32_t a1, uint32_t a2, uint32_t a3) {
@@ -268,6 +377,12 @@ void QueueApc(Thread& t, uint32_t routine, uint32_t a1, uint32_t a2, uint32_t a3
 
 bool RunApcs(Thread& t) {
     bool ran = false;
+    // the routines are guest code: the thread is running them, whatever call it was blocked in
+    struct Back {
+        Thread& t;
+        uint8_t was;
+        ~Back() { if (t.kstate.load() == Thread::kRunning) t.kstate = was; }
+    } back{t, t.kstate.exchange(Thread::kRunning)};
     for (;;) {
         std::array<uint32_t, 4> a;
         {

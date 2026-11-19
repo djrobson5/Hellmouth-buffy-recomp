@@ -360,6 +360,7 @@ void VerticalBlank(X86Context& ctx) {
         next = std::max(next + std::chrono::microseconds(16667), clock::now());
         std::this_thread::sleep_until(next);
         if (kernel::Frozen()) continue;  // paused: no blanks, as no time passes for the game
+        kernel::HostWriter writing;
         uint32_t count = Dev(XDK_CDevice_VBlankCount) + 1, swaps = Dev(kDevSwapCount);
         SetDev(XDK_CDevice_VBlankCount, count);
         ObjectRef event = FromPointer(kDevice + XDK_CDevice_VBlankEvent);
