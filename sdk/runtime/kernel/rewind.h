@@ -58,8 +58,9 @@ struct RestorePlan {
 };
 // Compares the threads now with the snapshot's. 'transient' is a start routine whose threads hold nothing of their own (the
 // state is in guest memory they poll), so they may be stopped and started again from their entry; any other difference
-// refuses. Changes nothing.
-RestorePlan PlanRestore(const KernelSnapshot& snap, X86Context& main_ctx, uint64_t main_depth, uint32_t transient);
+// refuses. Changes nothing. check_main false leaves the calling thread's own place out (to ask beforehand, from anywhere,
+// whether the other threads allow the restore).
+RestorePlan PlanRestore(const KernelSnapshot& snap, X86Context& main_ctx, uint64_t main_depth, uint32_t transient, bool check_main = true);
 
 struct RestoreResult {
     uint64_t bytes = 0;

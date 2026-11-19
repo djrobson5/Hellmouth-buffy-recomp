@@ -180,7 +180,10 @@ std::wstring HandoverEvent(unsigned long process) {
     return L"Local\\" + std::wstring(app::kGame.name) + L"Handover-" + std::to_wstring(process);
 }
 
+void (*g_relaunch_hook)() = nullptr;
+
 void Relaunch(const char* exe) {
+    if (g_relaunch_hook) g_relaunch_hook();
     ach::Flush();  // before the new process reads the file
     logx::Flush();
 #ifdef _WIN32

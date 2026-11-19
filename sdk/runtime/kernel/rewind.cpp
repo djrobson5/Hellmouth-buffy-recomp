@@ -31,7 +31,7 @@ void CaptureKernel(KernelSnapshot& out, X86Context& main_ctx, uint64_t main_dept
     out.valid = true;
 }
 
-RestorePlan PlanRestore(const KernelSnapshot& snap, X86Context& main_ctx, uint64_t main_depth, uint32_t transient) {
+RestorePlan PlanRestore(const KernelSnapshot& snap, X86Context& main_ctx, uint64_t main_depth, uint32_t transient, bool check_main) {
     RestorePlan p;
     char buf[200];
     auto refuse = [&](const char* fmt, auto... args) {
@@ -57,7 +57,7 @@ RestorePlan PlanRestore(const KernelSnapshot& snap, X86Context& main_ctx, uint64
         if (s.main) {
             if (!c || c.get() != self) {
                 refuse("thread %X took the snapshot but is not the one restoring", s.id);
-            } else if (main_ctx.esp != s.esp || R32(main_ctx.esp) != s.ret || main_depth != s.depth) {
+            } else if (check_main && (main_ctx.esp != s.esp || R32(main_ctx.esp) != s.ret || main_depth != s.depth)) {
                 refuse("the main thread is not at the snapshot's place (esp %08X, was %08X; native depth %llu, was %llu)", main_ctx.esp, s.esp,
                        (unsigned long long)main_depth, (unsigned long long)s.depth);
             } else {

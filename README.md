@@ -158,6 +158,10 @@ except where it says otherwise.
   holds. Characters' positions still step at 60 a second, as the game is built that way; the camera and everything else update
   on every frame. Movies keep their own rate.
 - `[graphics] brightness` (0.5 to 2, 1 by default) is a curve over the picture, on top of the game's own Brightness slider.
+- `[gameplay] mid_level_checkpoints` (on by default) keeps a copy of the game in memory about every minute of a level. When you die
+  and choose Resurrect, the game goes back to a recent copy instead of loading the level again from its start. It is read when a level
+  begins; `false` gives the game's own reload. Load Game and the saved games are untouched, and nothing is shown when a copy is taken
+  or used. See "Mid-level checkpoints" below.
 - `[graphics] renderer = 0` uses the software renderer, at a few pictures a second. The game also falls back on it if MoltenVK
   can't start.
 
@@ -169,6 +173,18 @@ The menu's picture settings:
 - **Original texture softness** draws the 3D textures at the detail the Xbox showed at 480 lines, and leaves 2D alone.
 - **Smooth menus and HUD** upscales the 2D pictures the game reads unfiltered. It's on by default and subtle here: the HUD and
   button icons change, while the text is filtered already.
+
+### Mid-level checkpoints
+
+The game reloads a level from its start when Buffy dies. With `[gameplay] mid_level_checkpoints` on, Hellmouth keeps the last two
+copies of the whole game in memory, taken about a minute apart (a copy is about 66 MB, so about 130 MB for the pair, freed when
+the level ends). Resurrect on the death screen then goes back to the newer copy, or to the older one when the death came within
+10 seconds of the last rewind, so dying again at once doesn't loop. A copy is only taken when it is safe: Buffy alive, on the ground and
+standing, walking or running, not hurt in the last 3 seconds, and no menu, cutscene, talk scene or movie up. The copy due after a minute
+waits for the first safe moment. If there is no copy yet, or it can't be restored, the game reloads the level as it always did.
+
+Deaths still count, and the achievements keep their progress through a rewind: nothing is taken back, so a kill made again after going
+back counts again (secrets are counted once a level, as before). A rewind shows no note.
 
 ### Texture packs
 

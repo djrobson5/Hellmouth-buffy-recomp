@@ -494,6 +494,48 @@ uint64_t Snapshot::BytesOf(RangeKind k) const {
     return n;
 }
 
+// the ranges a snapshot copies, as CaptureSnapshot makes them (the caller holds g_lock)
+template <class F>
+static void ForSnapshotRanges(F&& add) {
+    for (uint64_t p = 0; p < g_committed.size();) {
+        if (!g_committed[p]) {
+            p++;
+            continue;
+        }
+        uint64_t q = p;
+        while (q < g_committed.size() && g_committed[q]) q++;
+        uint32_t va = uint32_t(p << 12);
+        add(va, uint32_t((q - p) << 12), va >= kStackBase ? RangeKind::Stack : va >= kSystemBase ? RangeKind::System : RangeKind::User);
+        p = q;
+    }
+    add(kKernelDataBase, kKernelDataSize, RangeKind::Physical);
+    g_contig.ForUsed([&](uint32_t va, uint32_t size) { add(va, size, RangeKind::Physical); });
+    if (g_host_physical_next > kPhysicalSize)
+        add(kContiguousBase + kPhysicalSize, g_host_physical_next - kPhysicalSize, RangeKind::HostPhysical);
+}
+
+uint64_t SnapshotSize() {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    uint64_t total = 0;
+    ForSnapshotRanges([&](uint32_t, uint32_t size, RangeKind) { total += size; });
+    return total;
+}
+
+void ReserveSnapshot(Snapshot& out, uint64_t bytes) {
+    if (out.data && out.capacity >= bytes) return;
+    out.capacity = bytes;
+    out.data.reset(new uint8_t[bytes]);
+    std::memset(out.data.get(), 0, bytes);  // every page touched now
+}
+
+void ReleaseSnapshot(Snapshot& out) {
+    out.ranges.clear();
+    out.ranges.shrink_to_fit();
+    out.data.reset();
+    out.data_bytes = out.capacity = out.table_bytes = 0;
+    out.tables.reset();
+}
+
 void CaptureSnapshot(Snapshot& out) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     // the tables first: what is allocated now is what is copied below
@@ -561,6 +603,20 @@ void CaptureSnapshot(Snapshot& out) {
     for (const SnapshotRange& r : out.ranges) std::memcpy(out.data.get() + r.offset, g_base + r.va, r.size);
     out.tables = std::move(t);
     out.table_bytes = tb;
+}
+
+uint64_t DiffSnapshot(const Snapshot& in, uint32_t* first) {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    uint64_t diff = 0;
+    for (const SnapshotRange& r : in.ranges) {
+        const uint8_t *live = g_base + r.va, *held = in.data.get() + r.offset;
+        for (uint32_t i = 0; i < r.size; i++)
+            if (live[i] != held[i]) {
+                if (!diff && first) *first = r.va + i;
+                diff++;
+            }
+    }
+    return diff;
 }
 
 uint64_t RestoreSnapshot(const Snapshot& in) {

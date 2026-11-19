@@ -78,8 +78,18 @@ struct Snapshot {
     bool reused = false;  // the buffer of an earlier snapshot served again, with no new pages to touch
     uint64_t BytesOf(RangeKind k) const;
 };
+// The bytes a snapshot taken now would copy.
+uint64_t SnapshotSize();
+// Gives 'out' a buffer of at least 'bytes' and touches every page of it, so that the first snapshots into it do not wait for
+// the system to supply the pages. Changes nothing of the guest.
+void ReserveSnapshot(Snapshot& out, uint64_t bytes);
+// Gives the buffer back (the tables and ranges too).
+void ReleaseSnapshot(Snapshot& out);
 // Fills 'out', keeping its buffer when it is big enough. The caller holds the guest still.
 void CaptureSnapshot(Snapshot& out);
+// The number of bytes of the guest's memory, over the ranges 'in' holds, that differ from it now (0 right after a restore with the guest
+// held still); the first differing address goes in *first. For checking a restore.
+uint64_t DiffSnapshot(const Snapshot& in, uint32_t* first);
 // Puts the guest's memory back as 'in' held it: pages committed now and not then are decommitted, pages missing are
 // committed, the allocator tables are the snapshot's and every captured range is copied back. The caller holds the guest
 // still. Returns the bytes copied.

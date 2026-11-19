@@ -7,6 +7,7 @@
 #include "app/app.h"
 #include "core/log.h"
 #include "game/extras.h"
+#include "game/rewind.h"
 #include "kernel/kernel.h"
 #include "xdk/hle.h"
 
@@ -177,6 +178,7 @@ X86_FUNC(sub_00206010) {
     if (IsPlayer(ctx.ecx)) {
         ach::Add("deaths", 1);
         ach::Unlock("die_once");
+        snapback::PlayerDied();  // a death always counts: this is before any rewind
     }
     __imp__sub_00206010(ctx, base);
 }

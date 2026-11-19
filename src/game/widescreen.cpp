@@ -7,6 +7,7 @@
 #include "app/app.h"
 #include "core/log.h"
 #include "game/extras.h"
+#include "game/rewind.h"
 #include "gpu/backend.h"
 #include "gpu/texture.h"
 #include "gpu/vertex.h"
@@ -100,6 +101,7 @@ X86_FUNC(sub_00018800) {
     g_in_level = true;
     __imp__sub_00018800(ctx, base);
     extras::LevelStarted(ctx);
+    snapback::LevelStarted(ctx);
 }
 
 // With widescreen off these change nothing, as the frame's shape is 4:3; they stay in place for the menu to turn it on.

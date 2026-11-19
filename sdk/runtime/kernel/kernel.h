@@ -268,6 +268,9 @@ bool Boot(std::vector<uint8_t> xbe, const std::string& xbe_name, const std::stri
 // the executable recompiled from an Xbox image path (D:\\default.xbe), null when there is none
 const char* ImageExe(std::string xbe_path);
 [[noreturn]] void Relaunch(const char* exe);
+// set by a game: called first in Relaunch, on the thread that relaunches, while this instance is still running (a game that rewinds
+// frees what it keeps for that)
+extern void (*g_relaunch_hook)();
 extern std::string g_launch_file;
 // The display a title keeps up through a quick reboot (D3DDevice_PersistDisplay): its front buffer goes to a file
 // beside launch.bin, and the next instance finds it as a surface at AvGetSavedDataAddress.

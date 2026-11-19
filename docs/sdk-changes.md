@@ -86,3 +86,10 @@ What this port changed:
   launch and display hand-over (the front end and relaunches only), `kernel/disc.cpp` (the mounted image, read only), and `xnet.cpp` (the
   sockets close at a relaunch; a title that opens them in a level would need them kept). `VkBackend::ResetResources` has been read but not run: the
   headless harness has no Vulkan device, and `ResetResources` is not written for the Direct3D 12 backend.
+- `sdk/runtime/kernel/rewind.h`, `rewind.cpp`: `PlanRestore` takes `check_main`; false leaves the calling thread's own place out, so a game can ask
+  from anywhere whether the other threads allow a restore, and decide before it commits to one. `kernel::g_relaunch_hook` (`boot.cpp`) is called
+  first in `Relaunch`, so a game that keeps snapshots frees them before the next instance starts.
+- `sdk/runtime/kernel/memory.h`, `memory.cpp`: `mem::SnapshotSize` (what a snapshot would copy now), `ReserveSnapshot` (a buffer of that size with every
+  page touched, so the first snapshots do not wait for the system to supply pages) and `ReleaseSnapshot`. A snapshot that finds its buffer too small
+  makes a new one, 12.5% larger than it needs (`Snapshot::reused` says which). `mem::DiffSnapshot` counts the bytes that differ between the
+  guest's memory and a snapshot, for checking a restore.

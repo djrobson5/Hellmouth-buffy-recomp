@@ -1,6 +1,15 @@
 #include "app/app.h"
 
+#include "game/rewind.h"
+
 void WidescreenInit();  // game/widescreen.cpp
+
+namespace {
+void GameInit() {
+    WidescreenInit();
+    snapback::Init();  // after the settings are read: whether the rewind bookkeeping runs at all
+}
+}  // namespace
 
 // what the runtime asks of the game; strings must be set, hooks may stay null
 const app::GameInfo app::kGame = {
@@ -14,7 +23,11 @@ const app::GameInfo app::kGame = {
     .missing = L"The game files couldn't be found. Give the game's disc image (.iso), or a folder with Default.xbe and its files.",
     .title_id = 0x45410012,
     .images = {{"default.xbe", "Buffy"}},  // lower case: the launch path is compared in lower case
-    .init = WidescreenInit,
+    .options = {{"gameplay", "mid_level_checkpoints", cfg::Type::Bool, "Mid-level checkpoints",
+                 "When Buffy dies and you choose Resurrect, the game goes back to a point saved in memory about a minute earlier, "
+                 "instead of the start of the level. Read at the start of each level; saved games are not affected.",
+                 &snapback::g_checkpoints}},
+    .init = GameInit,
     // TInputDeviceController::Poll (0x244F0), both sticks: centred inside 13107.2 of 32768, then rising to full at
     // 13107.2 + 18204.44 (1 / its scale, 0x618C74)
     .stick_deadzone = 13107.2f / 32768,
