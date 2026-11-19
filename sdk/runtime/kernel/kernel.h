@@ -225,7 +225,11 @@ struct HostWriter {
     HostWriter& operator=(const HostWriter&) = delete;
     bool owns = false, counted = false;
 };
-void EnableHostWriterGate();  // until then a HostWriter does nothing
+// Off until a game that rewinds says so, before its first thread starts: the bookkeeping the rewind needs (where each thread
+// blocks, the critical sections and locks it holds) and the host writer gate then do nothing.
+extern std::atomic<bool> g_rewinding;
+inline bool Rewinding() { return g_rewinding.load(std::memory_order_relaxed); }
+void EnableRewinding();
 bool StopHostWriters(int timeout_ms);
 void StartHostWriters();
 std::vector<ThreadRef> QuiesceGuestThreads(int timeout_ms);

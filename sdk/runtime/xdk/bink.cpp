@@ -29,6 +29,13 @@ std::unordered_set<uint32_t> g_held;  // movies whose frame was not decoded this
 
 }  // namespace
 
+namespace xdk {
+void ForgetMovies() {
+    std::lock_guard<std::mutex> lock(g_held_lock);
+    g_held.clear();
+}
+}  // namespace xdk
+
 X86_EXTERN_FUNC(GUEST_ORIG(BinkDoFrame));
 X86_FUNC(GUEST(BinkDoFrame)) {
     uint32_t bink = R32(ctx.esp + 4);

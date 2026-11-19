@@ -10,6 +10,7 @@
 #include "core/input.h"
 #include "xdk/hle.h"
 #include "xdk/layout.h"
+#include "xdk/rewind.h"
 
 using namespace kernel;
 
@@ -190,6 +191,28 @@ HLE_STDCALL(XInputSetState, 2) {
         if (ObjectRef o = FromHandle(ev)) SetEvent(*o);
     return 997;  // ERROR_IO_PENDING, already complete
 }
+
+namespace xdk {
+
+struct InputSnapshot::D {
+    std::unordered_map<uint32_t, Handle> handles;
+};
+InputSnapshot::InputSnapshot() = default;
+InputSnapshot::~InputSnapshot() = default;
+
+void CaptureInput(InputSnapshot& out) {
+    if (!out.d) out.d = std::make_unique<InputSnapshot::D>();
+    std::lock_guard<std::mutex> lock(g_ports_lock);
+    out.d->handles = g_handles;
+}
+
+void RestoreInput(const InputSnapshot& in) {
+    if (!in.d) return;
+    std::lock_guard<std::mutex> lock(g_ports_lock);
+    g_handles = in.d->handles;
+}
+
+}  // namespace xdk
 
 // A recompiled image launches through the XAPI, then a process restart into its executable; any other
 // (the dashboard, updates) is refused and the title stays in its menu.

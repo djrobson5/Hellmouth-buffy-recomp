@@ -46,7 +46,7 @@ X86_FUNC(sub_002AA870) {
         kernel::LeaveBlocked();
         kernel::SuspendPoint();
     }
-    if (self) self->locks_held++;
+    if (self && kernel::Rewinding()) self->locks_held++;
     ctx.esp += 4;
 }
 
@@ -55,8 +55,8 @@ X86_FUNC(sub_002AA950) {
     uint32_t expected = 1;
     if (!LockerCount(ctx, base).compare_exchange_strong(expected, 0, std::memory_order_release, std::memory_order_relaxed))
         LOGW("buffy: unlock of %s with count %d", kernel::ReadCString(kernel::R32(ctx.ecx + 4)).c_str(), int32_t(expected));
-    else if (kernel::Thread* self = kernel::Current())
-        self->locks_held--;
+    else if (kernel::Rewinding())
+        if (kernel::Thread* self = kernel::Current()) self->locks_held--;
     ctx.esp += 4;
 }
 

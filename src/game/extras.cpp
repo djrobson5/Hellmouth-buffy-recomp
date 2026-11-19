@@ -17,6 +17,7 @@
 #include "core/log.h"
 #include "game/extras.h"
 #include "game/levels.h"
+#include "game/rewind.h"
 #include "kernel/kernel.h"
 #include "xdk/hle.h"
 
@@ -61,6 +62,11 @@ uint32_t GuestNew(X86Context& ctx, uint32_t size) { return kernel::CallGuest(ctx
 // opening a menu again and again doesn't take more memory each time.
 uint32_t ScratchString(X86Context& ctx, const std::string& text) {
     static uint32_t buf = 0, cap = 0;
+    static uint32_t epoch = 0;
+    if (epoch != snapback::Epoch()) {  // a rewind put the guest's heap back: the buffer may be free memory now, or not there
+        epoch = snapback::Epoch();
+        buf = cap = 0;
+    }
     if (text.size() + 1 > cap) {
         cap = std::max<uint32_t>(256, uint32_t(text.size() + 1));
         buf = GuestNew(ctx, cap);

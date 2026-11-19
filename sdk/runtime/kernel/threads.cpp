@@ -18,6 +18,8 @@
 
 namespace kernel {
 
+std::atomic<bool> g_rewinding{false};
+
 namespace {
 
 thread_local ThreadRef t_current;
@@ -44,7 +46,6 @@ uintptr_t HostStackBase() {
 
 // holding the guest still (QuiesceGuestThreads)
 std::shared_timed_mutex g_host_gate;
-std::atomic<bool> g_gate_on{false};
 std::atomic<bool> g_hold{false};
 std::atomic<Thread*> g_hold_owner{nullptr};
 std::mutex g_hold_lock;
@@ -290,6 +291,7 @@ uint32_t Suspend(Thread& t) {
 void (*g_blocking)(bool done) = nullptr;
 
 void EnterBlocked(uint8_t state, void* frame) {
+    if (!Rewinding()) return;  // nothing reads where a thread is until a game rewinds
     Thread* t = Current();
     if (!t) return;
     if (t->ctx) {
@@ -301,6 +303,7 @@ void EnterBlocked(uint8_t state, void* frame) {
 }
 
 void LeaveBlocked() {
+    if (!Rewinding()) return;
     if (Thread* t = Current()) t->kstate = Thread::kRunning;
 }
 
@@ -322,7 +325,7 @@ void SuspendPoint() {
     Thread* t = Current();
     if (!t) return;
     if (t->doomed.load()) QuietExit(*t);
-    if (g_hold.load(std::memory_order_acquire) && g_hold_owner.load() != t) {
+    if (g_hold.load() && g_hold_owner.load() != t) {
         EnterBlocked(Thread::kParked, __builtin_frame_address(1));  // the kernel call's frame, as where it blocks
         {
             std::unique_lock<std::mutex> lock(g_hold_lock);
@@ -341,10 +344,10 @@ void SuspendPoint() {
     t->kstate = Thread::kRunning;
 }
 
-void EnableHostWriterGate() { g_gate_on = true; }
+void EnableRewinding() { g_rewinding = true; }
 
 HostWriter::HostWriter() {
-    if (!g_gate_on.load(std::memory_order_relaxed)) return;
+    if (!Rewinding()) return;
     counted = true;
     if (t_writer_depth++ == 0) {
         g_host_gate.lock_shared();
@@ -366,7 +369,7 @@ void StartHostWriters() { g_host_gate.unlock(); }
 
 std::vector<ThreadRef> QuiesceGuestThreads(int timeout_ms) {
     g_hold_owner = Current();
-    g_hold.store(true, std::memory_order_release);  // before the states are read: a thread read as blocked stops when it leaves
+    g_hold.store(true);  // before the states are read (and a thread says it runs before it looks at this): a thread read as blocked stops when it leaves
     const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     std::vector<ThreadRef> loose;
     for (;;) {
@@ -394,23 +397,45 @@ void QueueApc(Thread& t, uint32_t routine, uint32_t a1, uint32_t a2, uint32_t a3
     SignalChanged();
 }
 
+// A thread about to run an APC's guest code while the guest is held waits here, as a thread at a SuspendPoint does: the holder is
+// copying guest memory, and a routine run now would write to it. It waits in the state of the call it is blocked in. The thread
+// says it is running first and looks at the hold after (the holder sets the hold, then reads the states), so one of the two sees
+// the other: either the holder reads Running and waits for the routine to end, or the thread sees the hold and goes back.
+static bool HeldAgainstApc(Thread& t) { return g_hold.load() && g_hold_owner.load() != &t; }
+
 bool RunApcs(Thread& t) {
     bool ran = false;
-    // the routines are guest code: the thread is running them, whatever call it was blocked in
-    struct Back {
-        Thread& t;
-        uint8_t was;
-        ~Back() { if (t.kstate.load() == Thread::kRunning) t.kstate = was; }
-    } back{t, t.kstate.exchange(Thread::kRunning)};
     for (;;) {
-        std::array<uint32_t, 4> a;
         {
             std::lock_guard<std::mutex> lock(t.apc_lock);
             if (t.apcs.empty()) break;
+        }
+        if (t.doomed.load()) break;  // the wait this was called from sees it at its SuspendPoint
+        const uint8_t was = t.kstate.exchange(Thread::kRunning);
+        if (HeldAgainstApc(t)) {
+            // held: wait where this thread was blocked, not as running
+            if (was == Thread::kRunning) EnterBlocked(Thread::kParked, __builtin_frame_address(0));  // not in a call that says where it is
+            else t.kstate = was;
+            {
+                std::unique_lock<std::mutex> lock(g_hold_lock);
+                g_hold_cv.wait(lock, [&] { return !g_hold.load() || t.doomed.load(); });
+            }
+            if (was == Thread::kRunning) t.kstate = Thread::kRunning;
+            continue;
+        }
+        std::array<uint32_t, 4> a;
+        {
+            std::lock_guard<std::mutex> lock(t.apc_lock);
+            if (t.apcs.empty()) {
+                if (t.kstate.load() == Thread::kRunning) t.kstate = was;
+                break;
+            }
             a = t.apcs.front();
             t.apcs.pop_front();
         }
+        // the routines are guest code: the thread is running them, whatever call it was blocked in
         CallGuest(*t.ctx, a[0], {a[1], a[2], a[3]});
+        if (t.kstate.load() == Thread::kRunning) t.kstate = was;
         ran = true;
     }
     return ran;

@@ -177,7 +177,7 @@ KERNEL_EXPORT(277, RtlEnterCriticalSection, 1) {
     if (__atomic_add_fetch(lock_count, 1, __ATOMIC_SEQ_CST) == 0) {
         W32(cs + 0x18, me);
         W32(cs + 0x14, 1);
-        Current()->cs_held++;
+        if (Rewinding()) Current()->cs_held++;
         return 0;
     }
     if (R32(cs + 0x18) == me) {
@@ -188,7 +188,7 @@ KERNEL_EXPORT(277, RtlEnterCriticalSection, 1) {
     Wait({ev}, false, INT64_MAX, false);
     W32(cs + 0x18, me);
     W32(cs + 0x14, 1);
-    Current()->cs_held++;
+    if (Rewinding()) Current()->cs_held++;
     return 0;
 }
 
@@ -202,7 +202,7 @@ KERNEL_EXPORT(294, RtlLeaveCriticalSection, 1) {
         return 0;
     }
     W32(cs + 0x18, 0);
-    Current()->cs_held--;
+    if (Rewinding()) Current()->cs_held--;
     if (__atomic_sub_fetch(lock_count, 1, __ATOMIC_SEQ_CST) >= 0) SetEvent(*FromPointer(cs));
     return 0;
 }
@@ -214,7 +214,7 @@ KERNEL_EXPORT(306, RtlTryEnterCriticalSection, 1) {
     if (__atomic_compare_exchange_n(reinterpret_cast<int32_t*>(HostPtr(cs + 0x10)), &idle, 0, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
         W32(cs + 0x18, me);
         W32(cs + 0x14, 1);
-        Current()->cs_held++;
+        if (Rewinding()) Current()->cs_held++;
         return 1;
     }
     if (R32(cs + 0x18) != me) return 0;

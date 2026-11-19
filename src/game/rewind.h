@@ -5,6 +5,8 @@
 // taken, and put back, at the top of TGameManagerImplementation::Frame as ExecuteGame's loop calls it.
 namespace snapback {
 bool Enabled();
+// moves on at each restore: a host side cache of guest memory (a pointer kept from before) is stale when it differs
+uint32_t Epoch();
 // at that place, on the main thread; depth is the native stack in use there (the same from every call of this)
 void Frame(X86Context& ctx, uint64_t depth);
 }  // namespace snapback

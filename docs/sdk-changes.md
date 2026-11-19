@@ -49,13 +49,19 @@ What this port changed:
 - `sdk/runtime/app/achievements.cpp`: built on macOS, with the note showing a picture where the game supplies one, and notes carried
   across the restart into a level. `sdk/runtime/app/app.h`, `overlay.cpp`, `sdk/runtime/gpu/vk.cpp`: `app::g_ui_picture` for those pictures.
 - `sdk/licenses/LiberationSans-OFL.txt`: new, the licence of the menu font.
-- `sdk/runtime/kernel/threads.cpp`, `kernel.h`, `objects.cpp`, `xboxkrnl.cpp`: for the rewind probe (`src/game/rewind_probe.cpp`).
+- `sdk/runtime/kernel/threads.cpp`, `kernel.h`, `objects.cpp`, `xboxkrnl.cpp`: for rewinding the guest in its process (`src/game/rewind.cpp`).
   Each `Thread` reports where it is (`kstate`, the guest esp and return address of the call that blocked it, its native
   stack pointer, its start routine, the guest critical sections it holds) at `Wait`, `KeDelayExecutionThread`,
   `NtYieldExecution` and `SuspendPoint`; the delay and yield now check `SuspendPoint` on the way out as well. A guest thread
   can be held still with `QuiesceGuestThreads` (it stops at its next `SuspendPoint`), and the host threads that write guest
-  memory run inside a `HostWriter` that `StopHostWriters` waits for; the gate does nothing until `EnableHostWriterGate`.
+  memory run inside a `HostWriter` that `StopHostWriters` waits for. `RunApcs` waits for the hold before it runs each APC's guest
+  code, in the state of the call it was blocked in (a wait or delay that took an APC could otherwise run guest code, Bink's wait
+  among it, while memory was being copied).
   The clock, vertical blank (`xdk/d3d8.cpp`), DPC, timer, pad poller (`xdk/xapi.cpp`), sound pump and mixer (`xdk/dsound.cpp`) threads use it.
+  None of this bookkeeping runs until a game calls `kernel::EnableRewinding()` (before its first thread starts): the host
+  writer gate, `EnterBlocked` and `LeaveBlocked`, and the counts of critical sections and locks held, all test `kernel::Rewinding()`
+  first, one relaxed load. `SuspendPoint` itself reads two more flags (the hold, a thread to stop); the native frame address
+  it takes (`__builtin_frame_address(1)`, which needs frame pointers) is read only when a thread actually parks.
 - `sdk/runtime/kernel/memory.cpp`, `memory.h`: `CaptureSnapshot` copies every committed range, the allocated part of the
   physical window (once) and the allocator tables.
 - `sdk/runtime/kernel/rewind.h`, `rewind.cpp`, `objects.cpp`, `files.cpp`, `threads.cpp`, `xboxkrnl.cpp`, `memory.cpp`, `cpu/dispatch.cpp`: a restore
@@ -67,8 +73,16 @@ What this port changed:
   and refuses before anything changes; a thread whose start routine the game names (a sound stream's) may be stopped (it leaves at its
   next `SuspendPoint` without writing guest memory) or started again from its entry, as the same `Thread`, with the same stack and handle.
   The timer, DPC and sound pump threads now enter the host writer gate before they take an item, so none is held across a restore.
+- `sdk/runtime/xdk/rewind.h`, `xapi.cpp`, `bink.cpp`: `CaptureInput` and `RestoreInput` keep the XInput handle table (a handle is guest memory, the pad
+  it names is on the host: one closed after the snapshot would leave the title polling a handle that is gone), and `ForgetMovies` clears
+  the Bink frames held back for the 120 fps pacing, which are named by guest address.
 - `sdk/runtime/xdk/rewind.h`, `d3d8.cpp`, `dsound.cpp`: `CaptureDevice` and `RestoreDevice` copy the host's Direct3D state (shader tables, `g_state`,
   surfaces, the immediate mode and user pointer vertex state; three function statics moved to file scope for it), `CaptureSound` and
   `RestoreSound` the voices and the callbacks waiting. `gpu::Backend::ResetResources` (no-op by default; the Vulkan backend drops its
   textures and targets after the GPU is idle, the threaded renderer forwards it) makes everything made from guest memory again.
 
+  Host state read through and left alone, as a restore needs nothing of it: `gpu/texture.cpp`'s dirty epochs (they only change what a
+  texture cache compares, and `ResetResources` empties the caches), `gpu/vertex.cpp`'s `g_frame_sides` (set again every frame), `kernel/boot.cpp`'s
+  launch and display hand-over (the front end and relaunches only), `kernel/disc.cpp` (the mounted image, read only), and `xnet.cpp` (the
+  sockets close at a relaunch; a title that opens them in a level would need them kept). `VkBackend::ResetResources` has been read but not run: the
+  headless harness has no Vulkan device, and `ResetResources` is not written for the Direct3D 12 backend.

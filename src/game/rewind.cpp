@@ -7,6 +7,7 @@
 // on from where it was. See kernel/rewind.h for what is put back.
 #include "game/rewind.h"
 
+#include <bit>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -19,6 +20,7 @@
 #include "kernel/kernel.h"
 #include "kernel/memory.h"
 #include "kernel/rewind.h"
+#include "xdk/hle.h"
 #include "xdk/rewind.h"
 
 namespace {
@@ -34,6 +36,7 @@ struct Slot {
     kernel::KernelSnapshot kernel;
     xdk::DeviceSnapshot device;
     xdk::SoundSnapshot sound;
+    xdk::InputSnapshot input;
     bool valid = false;
     double taken_s = 0;
     uint64_t taken_frame = 0;
@@ -52,6 +55,7 @@ struct State {
     bool started = false;
     uint64_t frames = 0;
     int restores = 0, ok = 0, refused = 0;
+    uint32_t epoch = 0;  // each restore moves it on
     bool strict = false;  // no thread may be stopped or started again: any difference of threads refuses
 };
 State g;
@@ -104,6 +108,7 @@ void Snapshot(size_t n, X86Context& ctx, uint64_t depth) {
     const auto t_held = Clock::now();
     xdk::CaptureDevice(s.device);
     xdk::CaptureSound(s.sound);
+    xdk::CaptureInput(s.input);
     mem::CaptureSnapshot(s.memory);
     kernel::CaptureKernel(s.kernel, ctx, depth);
     const auto t_copy = Clock::now();
@@ -160,6 +165,9 @@ void Restore(size_t n, X86Context& ctx, uint64_t depth) {
     }
     xdk::RestoreDevice(s.device);
     xdk::RestoreSound(s.sound);
+    xdk::RestoreInput(s.input);
+    xdk::ForgetMovies();
+    g.epoch++;
     const auto t_done = Clock::now();
     Release();
     g.ok++;
@@ -170,6 +178,26 @@ void Restore(size_t n, X86Context& ctx, uint64_t depth) {
     for (const kernel::ThreadRef& t : plan.stop) LOGI("rewind: restore %d stopped thread %X (start %08X)", seq, t->id, t->start_routine);
     for (size_t i : plan.restart) LOGI("rewind: restore %d started thread %X again (start %08X, parameter %08X)", seq, s.kernel.threads[i].id, s.kernel.threads[i].start, s.kernel.threads[i].start_context);
     logx::Flush();
+}
+
+// Test only: the player dies as ICharacter::Event_Die makes it, by calling DieAsPlayer (vtable +0x50C) with a zeroed event, so that the
+// game spawns its death manager, which fades out and shows the death screen (TMenuResurrect), whose Continue calls PlayerDeathReload.
+// (Damage alone did not do it: ICharacter::Health_Change took the health to 0 and the player stood there; and Event_InitiateDeath
+// with an event of zeros stopped the game.)
+void Kill(X86Context& ctx) {
+    const uint32_t game = kernel::R32(0x7D0090), player = game ? kernel::R32(game + 0xF0) : 0;
+    if (!player) {
+        LOGW("rewind: kill: there is no player");
+        return;
+    }
+    const uint32_t sp = ctx.esp;
+    ctx.esp -= 32;
+    for (uint32_t i = 0; i < 8; i++) kernel::W32(ctx.esp + 4 * i, 0);
+    const uint32_t event = ctx.esp;
+    ctx.ecx = player;  // restored by CallGuest
+    kernel::CallGuest(ctx, kernel::R32(kernel::R32(player) + 0x50C), {event});
+    ctx.esp = sp;
+    LOGI("rewind: kill: the player %08X dies", player);
 }
 
 // `snap` or `restore`, then the slot
@@ -188,6 +216,8 @@ bool Command(X86Context& ctx, uint64_t depth) {
         if (std::string(word) == "strict") {
             g.strict = n != 0;
             LOGI("rewind: strict %d (%s)", n, g.strict ? "a restore that would stop or start a sound stream thread is refused" : "a sound stream thread may be stopped or started again");
+        } else if (std::string(word) == "kill") {
+            Kill(ctx);
         } else if (std::string(word) == "snap") Snapshot(size_t(n), ctx, depth);
         else if (std::string(word) == "restore") Restore(size_t(n), ctx, depth);
     }
@@ -198,7 +228,7 @@ bool Init() {
     const char* e = std::getenv("HELLMOUTH_REWIND_TEST");
     if (!e) return false;
     g.enabled = true;
-    kernel::EnableHostWriterGate();  // from the start: a host writer begun before it is on would not be waited for
+    kernel::EnableRewinding();  // from the start: a host writer begun before it is on would not be waited for
     std::string v = e;
     size_t at = 0;
     while (at < v.size()) {
@@ -217,6 +247,7 @@ const bool g_on = Init();  // before the game runs: the gate is on from the firs
 namespace snapback {
 
 bool Enabled() { return g_on; }
+uint32_t Epoch() { return g.epoch; }
 
 void Frame(X86Context& ctx, uint64_t depth) {
     const auto now = Clock::now();
@@ -244,3 +275,15 @@ void Frame(X86Context& ctx, uint64_t depth) {
 }
 
 }  // namespace snapback
+
+// TGameManagerImplementation::Frame, from ExecuteGame's loop only: Swap and the other callers come from loading and menus
+constexpr uint32_t kFrameReturn = 0x6423B;  // the `call [eax+0x14]` in ExecuteGame's loop at 0x64238
+X86_EXTERN_FUNC(__imp__sub_000183A0);
+X86_FUNC(sub_000183A0) {
+    if (snapback::Enabled() && kernel::R32(ctx.esp) == kFrameReturn) {
+        // the native stack in use here, the same at every call of this: a restore only goes back to the same call chain
+        kernel::Thread* self = kernel::Current();
+        snapback::Frame(ctx, self && self->host_base ? self->host_base - uintptr_t(__builtin_frame_address(0)) : 0);
+    }
+    __imp__sub_000183A0(ctx, base);
+}

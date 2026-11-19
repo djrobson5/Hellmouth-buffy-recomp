@@ -30,4 +30,20 @@ struct SoundSnapshot {
 void CaptureSound(SoundSnapshot& out);
 void RestoreSound(const SoundSnapshot& in);
 
+// The XInput handles the title holds (a handle is guest memory, what it names is on the host): one closed since the snapshot
+// would leave the title polling a handle that is gone.
+struct InputSnapshot {
+    InputSnapshot();
+    ~InputSnapshot();
+    InputSnapshot(const InputSnapshot&) = delete;
+    InputSnapshot& operator=(const InputSnapshot&) = delete;
+    struct D;
+    std::unique_ptr<D> d;
+};
+void CaptureInput(InputSnapshot& out);
+void RestoreInput(const InputSnapshot& in);
+
+// Movies whose frame the host held back (bink.cpp) are named by guest address; after a restore none is held.
+void ForgetMovies();
+
 }  // namespace xdk
