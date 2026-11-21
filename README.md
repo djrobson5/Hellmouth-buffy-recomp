@@ -40,7 +40,8 @@ Not proven yet:
 - **Extras:** Level Select and the Hard arenas have been driven through their menus in the headless harness (see "Extras"), not played
   by hand, and the achievement rule for Level Select games has been seen working only on the records of a save.
 - **Other Macs:** it has been tested on one machine, an M5 Pro with 64 GB of memory on macOS 27.0.1.
-- **Windows:** the SDK underneath also targets Windows, but this port's changes haven't been compiled there.
+- **Windows:** the SDK underneath also targets Windows, and this port's code now compiles and links for it (see "Cross-building for
+  Windows"), but that program has never been run.
 
 Levels are very dark near the camera, with hard-edged shadows. That's the game's own lighting, and it matches footage of the
 game. The game's Brightness slider (Options, Display) lifts it.
@@ -92,6 +93,22 @@ To run without the app: `build/app/Buffy "<path to image.iso>"`. The hard disk a
 executable unless `--saves` or `--log` say otherwise. To change settings there, create `settings.toml` beside it, or name a
 file with `--config`, which is filled in with the defaults. Keep the name `Buffy`: the game restarts itself to load a level,
 and the restart looks for that name beside the running executable. The window closes and opens again when that happens.
+
+### Cross-building for Windows
+
+A compile check, not a release: it builds the Windows program on a Mac with [llvm-mingw](https://github.com/mstorsjo/llvm-mingw),
+using the `generated/game` that `tools/regen.sh` made, and the result has never been run. It holds code made from the game,
+so it must not be shared.
+
+```sh
+export LLVM_MINGW=<folder of llvm-mingw>
+cmake --preset win-x64-mingw
+cmake --build out/build/win-x64-mingw
+```
+
+`XBE_USE_GENERATED` (set by the preset) builds from `generated/game` as it is, rather than running the recompiler, which would
+be a Windows program that can't run here. On Windows, the `release` preset (Clang and Ninja) recompiles as `sdk/README.md`
+describes. Both builds pass `XBE_RENDER_THREAD=0` and `XBE_RAW_VERTICES=0`, as the Mac build does.
 
 ## Achievements
 
