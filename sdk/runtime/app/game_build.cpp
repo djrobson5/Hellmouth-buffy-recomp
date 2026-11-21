@@ -9,6 +9,7 @@
 #include <set>
 #include <thread>
 
+#include "app/macho_export.h"
 #include "app/pe_export.h"
 #include "kernel/crypto.h"
 
@@ -170,6 +171,12 @@ std::string Command(const fs::path& program, const std::vector<Str>& args) {
     return line;
 }
 
+// a tool of the compiler folder: compiler\clang.exe for a DLL, compiler/clang for a dylib
+fs::path ToolPath(const Layout& layout, const Recipe& recipe, const char* name) {
+    return recipe.target == Target::MachO ? layout.Compiler() / name : layout.Tool(name);
+}
+std::string ToolName(const Recipe& recipe, const char* name) { return recipe.target == Target::MachO ? std::string(name) : std::string(name) + ".exe"; }
+
 enum class Ran { Ok, NotStarted, Failed, Cancelled };
 
 // one program, waited for: the line "run: <command>", then "exit: <what> after N ms". `code` is its exit code; `why` says what stopped one
@@ -221,19 +228,19 @@ bool MakePicturesImpl(const Layout& layout, const Recipe& recipe, const ReadPict
         return finish(false, "not made: cannot write into " + U8(scratch));
     fs::create_directories(layout.data, ec);
     uint32_t code = 0;
-    switch (RunProgram(run, layout.Tool("buffy_config"), {A("--pictures"), A("levelThumbnails.mtx"), A("launch_buffy.xpr"), layout.data.native()},
+    switch (RunProgram(run, ToolPath(layout, recipe, "buffy_config"), {A("--pictures"), A("levelThumbnails.mtx"), A("launch_buffy.xpr"), layout.data.native()},
                        scratch, cancel, code, why)) {
         case Ran::Ok:
             break;
         case Ran::Cancelled:
             return finish(false, "stopped");
         case Ran::NotStarted:
-            return finish(false, "not made: buffy_config.exe could not be started (" + why + ")");
+            return finish(false, "not made: " + ToolName(recipe, "buffy_config") + " could not be started (" + why + ")");
         case Ran::Failed:
-            return finish(false, "not made: buffy_config.exe failed (" + ExitText(code) + ")");
+            return finish(false, "not made: " + ToolName(recipe, "buffy_config") + " failed (" + ExitText(code) + ")");
     }
     for (const char* name : {"Buffy.ico", "Buffy.png"})
-        if (!Exists(layout.data / name)) return finish(false, std::string("not made: buffy_config.exe wrote no ") + name);
+        if (!Exists(layout.data / name)) return finish(false, "not made: " + ToolName(recipe, "buffy_config") + " wrote no " + name);
     const std::string marker = "pictures " + std::to_string(recipe.pictures) + "\n";
     if (!WriteFile(layout.PicturesMarker(), marker.data(), marker.size()))
         return finish(false, "not made: cannot write " + U8(layout.PicturesMarker()));
@@ -244,12 +251,14 @@ bool MakePicturesImpl(const Layout& layout, const Recipe& recipe, const ReadPict
 class Builder {
 public:
     Builder(const Layout& layout, const Recipe& recipe, Runner& run, Progress& progress, Failure& failure)
-        : layout_(layout), recipe_(recipe), run_(run), progress_(progress), failure_(failure), work_(layout.Work()) {}
+        : layout_(layout), recipe_(recipe), run_(run), progress_(progress), failure_(failure), work_(layout.Work()), src_(work_) {}
 
     Outcome Run(const ReadInputs& read, const ReadPictures& pictures);
+    Outcome RunFromSources(const fs::path& sources);
 
 private:
     Outcome RunSteps(const ReadInputs& read, const ReadPictures& pictures);
+    Outcome RunSourceSteps(const fs::path& sources);
     // a step, and a line in the log for the time it took ("time: translate 5300 ms"); the detail follows the time
     template <class Step>
     bool Timed(const char* phase, Step&& step, const std::function<std::string()>& detail = {}) {
@@ -278,6 +287,8 @@ private:
     bool Prepare(const ReadInputs& read);
     bool Config();
     bool Translate();
+    bool CheckSources();
+    bool UseSources(const fs::path& sources);
     bool Pictures(const ReadPictures& read);
     bool Plan();
     void RemoveTemps();
@@ -298,6 +309,7 @@ private:
     Progress& progress_;
     Failure& failure_;
     fs::path work_;
+    fs::path src_;  // where the sources are: <Work> (Build writes them there), or the folder BuildFromSources was given
     uint32_t partitions_ = 0;
     std::vector<Job> jobs_;  // the files to compile
     std::vector<std::string> all_;  // every source's name, in the order they are linked
@@ -307,17 +319,17 @@ private:
 bool Builder::RunTool(const std::string& step, const char* tool, const std::vector<Str>& args, const fs::path& cwd) {
     std::string why;
     uint32_t code = 0;
-    switch (RunProgram(run_, layout_.Tool(tool), args, cwd, progress_.cancel, code, why)) {
+    switch (RunProgram(run_, ToolPath(layout_, recipe_, tool), args, cwd, progress_.cancel, code, why)) {
         case Ran::Ok:
             return true;
         case Ran::Cancelled:
             return false;
         case Ran::NotStarted:
-            return Fail(step, std::string(tool) + ".exe could not be started (" + why + ")", HintFor(layout_, true, 0, false));
+            return Fail(step, ToolName(recipe_, tool) + " could not be started (" + why + ")", HintFor(layout_, true, 0, false));
         case Ran::Failed:
             break;
     }
-    return Fail(step, std::string(tool) + ".exe failed (" + ExitText(code) + ")", HintFor(layout_, false, code, false));
+    return Fail(step, ToolName(recipe_, tool) + " failed (" + ExitText(code) + ")", HintFor(layout_, false, code, false));
 }
 
 bool Builder::Prepare(const ReadInputs& read) {
@@ -347,8 +359,9 @@ bool Builder::Config() {
     if (toml.empty()) return Fail("Making the game's configuration", "buffy_config.exe wrote no game.toml", HintFor(layout_, false, 0, true));
     if (!ConfigNumber(toml, "partitions", partitions_) || partitions_ == 0 || partitions_ > 4096)
         return Fail("Making the game's configuration", "game.toml has no partition count");
-    if (ConfigLibrary("\n" + toml) != recipe_.library)
-        return Fail("Making the game's configuration", "game.toml names the DLL \"" + ConfigLibrary("\n" + toml) + "\", not " + recipe_.library);
+    const std::string& config_library = recipe_.config_library.empty() ? recipe_.library : recipe_.config_library;
+    if (ConfigLibrary("\n" + toml) != config_library)
+        return Fail("Making the game's configuration", "game.toml names the DLL \"" + ConfigLibrary("\n" + toml) + "\", not " + config_library);
     return true;
 }
 
@@ -368,13 +381,18 @@ bool Builder::Translate() {
         return false;
     all_ = {"x86_func_mapping"};
     for (uint32_t i = 0; i < partitions_; i++) all_.push_back("x86_recomp." + std::to_string(i));
+    return CheckSources();
+}
+
+// the sources are all there, and made from the image this executable was made for
+bool Builder::CheckSources() {
     for (const std::string& name : all_)
-        if (!Exists(work_ / (name + ".cpp")))
-            return Fail("Translating the game's code", "xbe_recomp.exe did not write " + name + ".cpp", HintFor(layout_, false, 0, true));
+        if (!Exists(src_ / (name + ".cpp")))
+            return Fail("Translating the game's code", ToolName(recipe_, "xbe_recomp") + " did not write " + name + ".cpp", HintFor(layout_, false, 0, true));
     for (const char* f : {"x86_recomp_shared.h", "image_symbols.h", "exports.def", "imports.def"})
-        if (!Exists(work_ / f)) return Fail("Translating the game's code", std::string("xbe_recomp.exe did not write ") + f, HintFor(layout_, false, 0, true));
+        if (!Exists(src_ / f)) return Fail("Translating the game's code", ToolName(recipe_, "xbe_recomp") + " did not write " + f, HintFor(layout_, false, 0, true));
     // the image the disc gave must be the one this executable was made for, or the DLL would be refused after all that compiling
-    std::string image = ImageStampOf(ReadText(work_ / "image_symbols.h"));
+    std::string image = ImageStampOf(ReadText(src_ / "image_symbols.h"));
     if (image != recipe_.image_stamp) {
         run_.Note("image: the sources say \"" + image + "\", this program expects \"" + recipe_.image_stamp + "\"");
         return Fail("Translating the game's code", "the game on the disc is not the release this program was made for",
@@ -382,6 +400,21 @@ bool Builder::Translate() {
                     "again, and if it still fails keep logs\\compile.log (it says what the sources claimed and what was expected).");
     }
     return true;
+}
+
+// BuildFromSources: the sources are in `sources` (their names are found there), the objects go to <Work>
+bool Builder::UseSources(const fs::path& sources) {
+    src_ = sources;
+    std::error_code ec;
+    fs::create_directories(work_, ec);
+    fs::create_directories(layout_.Build(), ec);
+    if (ec) return Fail("Preparing the folders", "cannot make " + U8(work_) + ": " + ec.message());
+    partitions_ = 0;
+    while (Exists(src_ / ("x86_recomp." + std::to_string(partitions_) + ".cpp"))) partitions_++;
+    if (!partitions_) return Fail("Reading the sources", U8(src_) + " has no x86_recomp.0.cpp");
+    all_ = {"x86_func_mapping"};
+    for (uint32_t i = 0; i < partitions_; i++) all_.push_back("x86_recomp." + std::to_string(i));
+    return CheckSources();
 }
 
 // the achievement pictures and the icon, when they are not made yet: never a failure, only a cancel stops the build here
@@ -413,16 +446,16 @@ bool Builder::Plan() {
     RemoveTemps();
     // an object is reused when its source, the flags it was compiled with (the ABI token is one of them) and the compiler are
     // what they were
-    salt_ = recipe_.compile_flags + "\nclang " + std::to_string(SizeOf(layout_.Tool("clang"))) + "\n";
+    salt_ = recipe_.compile_flags + "\nclang " + std::to_string(SizeOf(ToolPath(layout_, recipe_, "clang"))) + "\n";
     jobs_.clear();
     progress_.bytes_total = 0;
     uint64_t reused = 0;
     for (const std::string& name : all_) {
         Job job;
         job.name = name;
-        job.source = work_ / (name + ".cpp");
-        job.object = work_ / (name + ".obj");
-        job.key_file = work_ / (name + ".obj.key");
+        job.source = src_ / (name + ".cpp");
+        job.object = work_ / (name + (recipe_.target == Target::MachO ? ".o" : ".obj"));
+        job.key_file = fs::path(job.object).concat(".key");
         job.bytes = SizeOf(job.source);
         if (!KeyOf(salt_, job.source, job.key)) return Fail("Checking the sources", "cannot read " + name + ".cpp");
         if (progress_.cancel) return false;
@@ -466,15 +499,15 @@ bool Builder::Compile() {
         while (running.size() < slots && next < jobs_.size()) {
             const Job& job = jobs_[next++];
             std::vector<Str> args = base;
-            args.push_back(A(job.name + ".cpp"));
+            args.push_back(src_ == work_ ? A(job.name + ".cpp") : job.source.native());  // beside the objects: by name
             args.push_back(A("-o"));
-            args.push_back(A(job.name + ".obj.tmp"));
+            args.push_back(A(job.object.filename().string() + ".tmp"));
             std::string why;
             run_.Note("run: clang " + job.name + ".cpp");
-            int id = run_.Start(layout_.Tool("clang"), args, work_, why);
+            int id = run_.Start(ToolPath(layout_, recipe_, "clang"), args, work_, why);
             if (!id) {
                 stop();
-                return Fail("Compiling " + job.name + ".cpp", "clang.exe could not be started (" + why + ")", HintFor(layout_, true, 0, false));
+                return Fail("Compiling " + job.name + ".cpp", ToolName(recipe_, "clang") + " could not be started (" + why + ")", HintFor(layout_, true, 0, false));
             }
             running[id] = &job;
         }
@@ -491,14 +524,14 @@ bool Builder::Compile() {
         if (ended.code != 0) {
             run_.Note("clang " + job.name + ".cpp: " + ExitText(ended.code));
             stop();
-            return Fail("Compiling " + job.name + ".cpp", "clang.exe failed (" + ExitText(ended.code) + ")", HintFor(layout_, false, ended.code, false));
+            return Fail("Compiling " + job.name + ".cpp", ToolName(recipe_, "clang") + " failed (" + ExitText(ended.code) + ")", HintFor(layout_, false, ended.code, false));
         }
         // an object is written beside its name and moved there once whole: a closed window loses only files in progress. A
         // scanner may hold the new file for a moment, so a move that fails is tried a few times.
         fs::path temp = fs::path(job.object).concat(".tmp");
         if (!Exists(temp) || SizeOf(temp) == 0) {
             stop();
-            return Fail("Compiling " + job.name + ".cpp", "clang.exe ended well but its output is gone", HintFor(layout_, false, 0, true));
+            return Fail("Compiling " + job.name + ".cpp", ToolName(recipe_, "clang") + " ended well but its output is gone", HintFor(layout_, false, 0, true));
         }
         std::error_code ec;
         for (int attempt = 0; attempt < 20; attempt++) {
@@ -508,12 +541,12 @@ bool Builder::Compile() {
         }
         if (ec) {
             stop();
-            return Fail("Saving " + job.name + ".obj", ec.message(), HintFor(layout_, true, 0, false));
+            return Fail("Saving " + job.object.filename().string(), ec.message(), HintFor(layout_, true, 0, false));
         }
         std::string key = job.key + "\n";
         if (!WriteFile(job.key_file, key.data(), key.size())) {
             stop();
-            return Fail("Saving " + job.name + ".obj.key", "cannot write into " + U8(work_));
+            return Fail("Saving " + job.key_file.filename().string(), "cannot write into " + U8(work_));
         }
         progress_.bytes_done += job.bytes;
         progress_.files_done++;
@@ -531,6 +564,22 @@ bool Builder::Link() {
     if (ec) return Fail("Linking " + recipe_.library, "cannot make " + U8(staging) + ": " + ec.message());
     std::vector<Str> args;
     for (const std::string& f : Split(recipe_.link_flags)) args.push_back(A(f));
+    if (recipe_.target == Target::MachO) {
+        // the names the executable overrides stay undefined (it exports them); the others become aliases of their bodies
+        AliasStats stats;
+        std::string why;
+        if (!WriteAliasResponse(src_ / "exports.def", layout_.Compiler() / "overrides.txt", work_ / "alias.rsp", stats, why))
+            return Fail("Linking " + recipe_.library, "the aliases could not be made: " + why);
+        run_.Note("link: " + std::to_string(stats.listed) + " recompiled functions, " + std::to_string(stats.overridden) + " overridden by the executable (" +
+                  std::to_string(stats.unused) + " more overrides are of names this image lacks), " + std::to_string(stats.aliased) + " aliased");
+        args.push_back(A("-install_name"));
+        args.push_back(A("@rpath/" + recipe_.library));
+        args.push_back(A("@alias.rsp"));
+        args.push_back(A("-o"));
+        args.push_back((staging / recipe_.library).native());
+        for (const std::string& name : all_) args.push_back(A(name + ".o"));
+        return RunTool("Linking " + recipe_.library, "ld64.lld", args, work_);
+    }
     args.push_back(A("/def:exports.def"));
     args.push_back(A("/implib:code.lib"));
     args.push_back(A("/out:") + (staging / recipe_.library).native());
@@ -544,7 +593,9 @@ bool Builder::Install() {
     SetStage(Stage::Checking);
     fs::path staged = layout_.Build() / "new" / recipe_.library;
     std::string found, why;
-    if (!pe::ReadExportedText(staged, "X86GameCodeStamp", found, why))
+    const bool read = recipe_.target == Target::MachO ? macho::ReadExportedText(staged, "X86GameCodeStamp", found, why)
+                                                      : pe::ReadExportedText(staged, "X86GameCodeStamp", found, why);
+    if (!read)
         return Fail("Checking " + recipe_.library, "the linked file " + why, HintFor(layout_, false, 0, true));
     if (found != recipe_.stamp) {
         run_.Note("stamp: built \"" + found + "\", expected \"" + recipe_.stamp + "\"");
@@ -573,6 +624,30 @@ Outcome Builder::Run(const ReadInputs& read, const ReadPictures& pictures) {
     Outcome outcome = RunSteps(read, pictures);
     run_.Note("time: total " + Ms(NowMs() - began));  // whatever the outcome: a failed or stopped build says how far it got
     return outcome;
+}
+
+Outcome Builder::RunFromSources(const fs::path& sources) {
+    const int64_t began = NowMs();
+    Outcome outcome = RunSourceSteps(sources);
+    run_.Note("time: total " + Ms(NowMs() - began));
+    return outcome;
+}
+
+Outcome Builder::RunSourceSteps(const fs::path& sources) {
+    auto done = [&](bool ok) {
+        if (ok) return Outcome::Built;
+        return progress_.cancel ? Outcome::Cancelled : Outcome::Failed;
+    };
+    if (!Timed("sources", [&] { return UseSources(sources); })) return done(false);
+    if (!Timed("plan", [&] { return Plan(); })) return done(false);
+    const bool compiled = Timed("compile", [&] { return Compile(); }, [&] {
+        return " (" + std::to_string(progress_.files_done.load()) + " files compiled, " + std::to_string(std::max<size_t>(recipe_.slots, 1)) + " at a time)";
+    });
+    if (!compiled) return done(false);
+    if (!Timed("link", [&] { return Link(); })) return done(false);
+    if (!Timed("check and install", [&] { return Install(); })) return done(false);
+    SetStage(Stage::Done);
+    return Outcome::Built;
 }
 
 Outcome Builder::RunSteps(const ReadInputs& read, const ReadPictures& pictures) {
@@ -605,6 +680,11 @@ Outcome Build(const Layout& layout, const Recipe& recipe, const ReadInputs& read
     return builder.Run(read, pictures);
 }
 
+Outcome BuildFromSources(const Layout& layout, const Recipe& recipe, const fs::path& sources, Runner& run, Progress& progress, Failure& failure) {
+    Builder builder(layout, recipe, run, progress, failure);
+    return builder.RunFromSources(sources);
+}
+
 bool PicturesCurrent(const Layout& layout, const Recipe& recipe) {
     if (recipe.pictures <= 0) return true;  // none to make
     std::error_code ec;
@@ -620,12 +700,22 @@ bool MakePictures(const Layout& layout, const Recipe& recipe, const ReadPictures
     return made;
 }
 
-std::string Blocker(const Layout& layout, const Recipe& recipe) {
+std::string Blocker(const Layout& layout, const Recipe& recipe, bool translate) {
     const fs::path c = layout.Compiler();
-    std::vector<fs::path> needed = {layout.Tool("clang"), layout.Tool("lld-link"), layout.Tool("xbe_recomp"), layout.Tool("buffy_config"),
-                                    c / "sdk_names.txt", c / (fs::path(recipe.library).stem().string() + ".lib"),
-                                    c / "include" / "cpu" / "x86_ops.h", c / "include" / "cpu" / "x86_context.h",
-                                    c / "include" / "freestanding" / "cstdint", c / "xdk" / "4432" / "layout.toml"};
+    std::vector<fs::path> needed;
+    if (recipe.target == Target::MachO) {
+        needed = {ToolPath(layout, recipe, "clang"), ToolPath(layout, recipe, "ld64.lld"), c / "overrides.txt",
+                  c / "include" / "cpu" / "x86_ops.h", c / "include" / "cpu" / "x86_context.h", c / "include" / "freestanding" / "cstdint"};
+        if (translate)
+            for (const fs::path& f : {ToolPath(layout, recipe, "xbe_recomp"), ToolPath(layout, recipe, "buffy_config"), c / "sdk_names.txt",
+                                      c / "xdk" / "4432" / "layout.toml"})
+                needed.push_back(f);
+    } else {
+        needed = {layout.Tool("clang"), layout.Tool("lld-link"), layout.Tool("xbe_recomp"), layout.Tool("buffy_config"),
+                  c / "sdk_names.txt", c / (fs::path(recipe.library).stem().string() + ".lib"),
+                  c / "include" / "cpu" / "x86_ops.h", c / "include" / "cpu" / "x86_context.h",
+                  c / "include" / "freestanding" / "cstdint", c / "xdk" / "4432" / "layout.toml"};
+    }
     for (const fs::path& f : needed)
         if (!Exists(f))
             return "The compiler folder is missing " + U8(f.filename()) + " (" + U8(c) + "). Extract the whole zip again, keeping its folders together, then start the game.";
@@ -646,10 +736,12 @@ std::string Blocker(const Layout& layout, const Recipe& recipe) {
     return {};
 }
 
-DllState CheckDll(const fs::path& dll, const std::string& stamp, std::string* found) {
+DllState CheckDll(const fs::path& dll, const std::string& stamp, std::string* found, Target target) {
     if (!Exists(dll)) return DllState::Missing;
     std::string text, why;
-    if (!pe::ReadExportedText(dll, "X86GameCodeStamp", text, why)) {
+    const bool read = target == Target::MachO ? macho::ReadExportedText(dll, "X86GameCodeStamp", text, why)
+                                              : pe::ReadExportedText(dll, "X86GameCodeStamp", text, why);
+    if (!read) {
         if (found) *found = why;
         return DllState::Unreadable;
     }

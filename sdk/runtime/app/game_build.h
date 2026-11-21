@@ -12,6 +12,10 @@
 //   clang.exe          each source -> .obj, the biggest first, as many at once as the PC has room for
 //   lld-link.exe       the objects + <compiler>\<library>.lib (the executable's import library) -> <library>
 // then the DLL's stamp is read and must be the one the executable expects, and the DLL is moved into place.
+// On macOS (Recipe::target MachO) the tools have no .exe and the link is a dylib's (app/macho_export.h reads the stamp):
+//   clang              each source -> .o (arm64)
+//   ld64.lld           the objects + alias.rsp (WriteAliasResponse) -> <library>.dylib, dynamic_lookup binding the names the executable
+//                      has (the runtime, its overrides) when the dylib is loaded; no executable import library to link against
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
@@ -56,13 +60,18 @@ struct Layout {
     fs::path Tool(const char* name) const { return Compiler() / (std::string(name) + ".exe"); }
 };
 
+// what the game's code is built into: a PE DLL (Windows; lld-link) or a Mach-O dylib (macOS; ld64.lld)
+enum class Target { Pe, MachO };
+
 // what the executable knows about its game code
 struct Recipe {
-    std::string library;        // the DLL's name, Buffy.dll
+    Target target = Target::Pe;
+    std::string library;        // the DLL's name, Buffy.dll (Buffy.dylib for MachO)
+    std::string config_library; // what game.toml's `library` says, when that is not `library` (Buffy.dll, which the recompiler's exports.def and the dylib share)
     std::string stamp;          // what the DLL's X86GameCodeStamp must say
     std::string image_stamp;    // the part of it that comes from the image ("image=<hash> symbols=<hash>"), which the sources must say too
     std::string compile_flags;  // for clang, space separated (game_code_flags.h)
-    std::string link_flags;     // for lld-link
+    std::string link_flags;     // for lld-link (ld64.lld, without the install name, response file and output)
     size_t slots = 1;           // compiles at once
     int pictures = 0;           // the version of the recipe for the pictures and the icon (game_code_recipe.h); 0 when the game has none
 };
@@ -111,7 +120,8 @@ struct Failure {
 enum class Outcome { Built, Failed, Cancelled };
 
 // What stops a build before it starts, for the player to fix; empty when nothing does: tools missing, no writing, no room.
-std::string Blocker(const Layout& layout, const Recipe& recipe);
+// `translate` false: the sources are given (BuildFromSources), so the tools that make them are not needed.
+std::string Blocker(const Layout& layout, const Recipe& recipe, bool translate = true);
 
 // The achievement pictures and the icon (<data>\achievements\<id>.png, <data>\Buffy.png and Buffy.ico) are made from the disc by
 // `buffy_config --pictures`. They have a marker of their own, <data>\pictures.stamp, which holds the recipe's version and is written when
@@ -135,9 +145,15 @@ inline bool EnsurePictures(const Layout& layout, const Recipe& recipe, const Rea
 Outcome Build(const Layout& layout, const Recipe& recipe, const ReadInputs& read, const ReadPictures& pictures, Runner& run, Progress& progress,
               Failure& failure);
 
+// The compile, link and install steps alone, over the sources of a recompile that is already made (the folder that tools/regen.sh
+// fills: x86_func_mapping.cpp, x86_recomp.<n>.cpp, x86_recomp_shared.h, image_symbols.h, exports.def). Nothing is read from a disc and
+// nothing is written to `sources`: the objects, the response file and the log go to <Work>, as the steps of Build do. For development
+// (sdk/host/build.sh --game-code-dylib), where the game's code is built without the first start's translation.
+Outcome BuildFromSources(const Layout& layout, const Recipe& recipe, const fs::path& sources, Runner& run, Progress& progress, Failure& failure);
+
 // the DLL at <Build>\<library> against the stamp it must say
 enum class DllState { Missing, Current, Stale, Unreadable };
-DllState CheckDll(const fs::path& dll, const std::string& stamp, std::string* found = nullptr);
+DllState CheckDll(const fs::path& dll, const std::string& stamp, std::string* found = nullptr, Target target = Target::Pe);
 
 // macOS: the response file for the dylib's link. In a Mach-O dylib a weak definition always beats the executable's override, so the
 // generated code defines no weak name (X86_WEAK_FUNC in cpu/x86_ops.h expands to nothing there) and the link gives each recompiled

@@ -5,13 +5,16 @@
 // tools/sim_first_start.sh builds it and drives it.
 //
 //   first_start_check --app <folder with compiler/> --data <data folder> --game <disc image or folder with Default.xbe>
-//       [--slots N] [--stop-after N] [--abi <token>] [--pictures N] [--check] [--print-stamp]
+//       [--slots N] [--stop-after N] [--abi <token>] [--pictures N] [--check] [--print-stamp] [--sources <folder>]
 //   --check        only say whether the DLL is current (exit 0 current, 1 not)
 //   --stop-after   cancel after N files are compiled (a closed window)
 //   --abi          pretend the executable has another ABI token (an update)
 //   --pictures     pretend the executable's recipe for the achievement pictures and the icon is version N (default: the real one, 1);
 //                  0 makes none. A start whose DLL is current makes them when they are not made, as the executable does.
 //   --print-stamp  print the stamp the executable expects, as built from the headers here, and exit
+//   --sources      compile and link the sources in <folder> (tools/regen.sh's generated/game) and nothing else, with no disc: the build
+//                  of the game's code for a macOS host (sdk/host/build.sh --game-code-dylib, which compiles this with its own
+//                  game_code_flags.h, that of a Mach-O dylib). --game is not needed.
 // Prints what --prepare prints ("progress <0 to 1> <text>" lines) on stdout and "error: <step>: <reason>" on stderr.
 #include <fcntl.h>
 #include <signal.h>
@@ -179,7 +182,7 @@ bool ReadPictureFiles(const fs::path& game, gamebuild::PictureInputs& in, std::s
 }  // namespace
 
 int main(int argc, char** argv) {
-    fs::path app, data, game;
+    fs::path app, data, game, sources;
     size_t slots = 4;
     long stop_after = -1;
     bool check_only = false, print_stamp = false;
@@ -191,6 +194,7 @@ int main(int argc, char** argv) {
         if (a == "--app") app = next();
         else if (a == "--data") data = next();
         else if (a == "--game") game = next();
+        else if (a == "--sources") sources = next();
         else if (a == "--slots") slots = size_t(std::atol(next().c_str()));
         else if (a == "--stop-after") stop_after = std::atol(next().c_str());
         else if (a == "--abi") abi = next();
@@ -202,13 +206,14 @@ int main(int argc, char** argv) {
         std::printf("%s\n", gamecode::Stamp().c_str());
         return 0;
     }
-    if (app.empty() || data.empty() || game.empty()) {
-        std::fprintf(stderr, "usage: first_start_check --app <folder> --data <folder> --game <disc image> [--slots N] [--stop-after N] [--abi token] [--check]\n");
+    if (app.empty() || data.empty() || (game.empty() && sources.empty())) {
+        std::fprintf(stderr, "usage: first_start_check --app <folder> --data <folder> --game <disc image> [--slots N] [--stop-after N] [--abi token] [--check] [--sources folder]\n");
         return 2;
     }
     gamebuild::Layout layout{fs::absolute(app), fs::absolute(data), fs::absolute(data) / "logs"};
     gamebuild::Recipe recipe = gamecode::Recipe(slots);
     if (pictures >= 0) recipe.pictures = pictures;
+    if (!sources.empty()) recipe.pictures = 0;  // no disc: no pictures
     gamebuild::ReadPictures read_pictures = [&](gamebuild::PictureInputs& in, std::string& why) { return ReadPictureFiles(game, in, why); };
     if (!abi.empty()) {  // an update that changed the ABI: the stamp and the compile's token say so
         auto swap = [&](std::string& s) {
@@ -223,7 +228,7 @@ int main(int argc, char** argv) {
     }
     fs::path dll = layout.Build() / recipe.library;
     std::string found;
-    gamebuild::DllState state = gamebuild::CheckDll(dll, recipe.stamp, &found);
+    gamebuild::DllState state = gamebuild::CheckDll(dll, recipe.stamp, &found, recipe.target);
     const char* names[] = {"missing", "current", "stale", "unreadable"};
     std::printf("dll: %s (%s)\n", names[int(state)], found.c_str());
     if (state == gamebuild::DllState::Current) {
@@ -239,7 +244,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (check_only) return 1;
-    if (std::string blocker = gamebuild::Blocker(layout, recipe); !blocker.empty()) {
+    if (std::string blocker = gamebuild::Blocker(layout, recipe, sources.empty()); !blocker.empty()) {
         std::fprintf(stderr, "error: %s\n", blocker.c_str());
         return 9;
     }
@@ -260,8 +265,11 @@ int main(int argc, char** argv) {
             progress.cancel = true;
     };
     gamebuild::Failure failure;
-    gamebuild::Outcome outcome = gamebuild::Build(
-        layout, recipe, [&](gamebuild::Inputs& in, std::string& why) { return ReadDisc(game, in, why); }, read_pictures, runner, progress, failure);
+    gamebuild::Outcome outcome =
+        sources.empty()
+            ? gamebuild::Build(
+                  layout, recipe, [&](gamebuild::Inputs& in, std::string& why) { return ReadDisc(game, in, why); }, read_pictures, runner, progress, failure)
+            : gamebuild::BuildFromSources(layout, recipe, fs::absolute(sources), runner, progress, failure);
     if (outcome == gamebuild::Outcome::Built) {
         std::printf("progress 1.000 Done\n");
         return 0;

@@ -1,7 +1,10 @@
 #pragma once
 // What this executable knows about its game code, as app/game_build.h takes it: the flags CMake wrote for the compile and link
 // (game_code_flags.h, one place for them) and the image the recompiler wrote (image_symbols.h), made into the stamp a DLL for
-// this executable and this game must say. Included by app/game_code.cpp, and by tools/first_start_check.cpp for the Mac check.
+// this executable and this game must say. Included by app/game_code.cpp, by tools/first_start_check.cpp (the Mac check of the Windows
+// first start, and the Mac build of the game's code dylib), and by the macOS host's game code loader (sdk/host/main.cpp).
+// game_code_flags.h says which: it defines XBE_GAME_CODE_MACHO when its flags build a Mach-O dylib.
+#include <filesystem>
 #include <string>
 
 #include "app/game_build.h"
@@ -37,6 +40,12 @@ inline constexpr int kPicturesRecipe = 1;
 inline gamebuild::Recipe Recipe(size_t slots) {
     gamebuild::Recipe r;
     r.library = IMAGE_LIBRARY;
+#ifdef XBE_GAME_CODE_MACHO
+    // the recompiler's config names Buffy.dll (it writes exports.def for it); the macOS build of that code is Buffy.dylib
+    r.target = gamebuild::Target::MachO;
+    r.config_library = IMAGE_LIBRARY;
+    r.library = std::filesystem::path(IMAGE_LIBRARY).stem().string() + ".dylib";
+#endif
     r.stamp = Stamp();
     r.image_stamp = IMAGE_CODE_STAMP;
     r.compile_flags = Narrow(XBE_GAME_CODE_COMPILE_FLAGS);
