@@ -123,6 +123,7 @@ rm -rf "$DATA/build" "$W"
 keys=$(ls "$W" | grep -c '\.obj\.key$'); echo "$keys objects kept"
 [ "$keys" -ge 30 ] && [ -z "$(find "$W" -name '*.tmp')" ]; chk $? "the finished objects are kept and no half written one is left"
 tail -2 "$DATA/logs/compile.log" | grep -q '^time: total [0-9]* ms$'; chk $? "a stopped build still ends its log with the total time ($(tail -3 "$DATA/logs/compile.log" | tr '\n' ' '))"
+n=$(grep -o '^time: compile [0-9]* ms ([0-9]* files compiled' "$DATA/logs/compile.log" | grep -o '([0-9]*' | tr -d '('); [ -n "$n" ] && [ "$n" -ge 30 ] && [ "$n" -lt 129 ]; chk $? "and its compile time counts the files that were done ($n of 129), not the files planned"
 [ ! -f "$DLL" ]; chk $? "and there is no DLL"
 "$FSC" --app "$APP" --data "$DATA" --game "$DISC" --slots "$SLOTS" > "$D/carry.out" 2>&1; chk $? "carried on"
 grep "compile:" "$DATA/logs/compile.log" | head -1
@@ -237,6 +238,11 @@ printf '#!/bin/sh\necho "buffy_config: simulated failure" >&2\nexit 3\n' > "$D/p
 rm "$D/p11/app/compiler/buffy_config.exe"
 "$FSC" --app "$D/p11/app" --data "$D/p11/app" --game "$DISC" > "$D/q5.out" 2>&1; code=$?
 [ $code = 0 ] && grep -q '^pictures: not made: buffy_config.exe could not be started' "$D/p11/app/logs/compile.log"; chk $? "a picture tool that is not there: the start goes on (exit $code), the log says it could not be started"
+# d: a marker that cannot be removed (a folder in its place): the pictures step fails before it writes anything, and the start goes on
+cp -c -R "$APP" "$D/p11/app2"; rm -rf "$D/p11/app2/achievements" "$D/p11/app2/Buffy.ico" "$D/p11/app2/Buffy.png" "$D/p11/app2/cache" "$D/p11/app2/logs"
+rm -rf "$D/p11/app2/pictures.stamp"; mkdir -p "$D/p11/app2/pictures.stamp"; echo x > "$D/p11/app2/pictures.stamp/keep"
+"$FSC" --app "$D/p11/app2" --data "$D/p11/app2" --game "$DISC" > "$D/q6.out" 2>&1; code=$?
+[ $code = 0 ] && grep -q '^pictures: not made: cannot remove the marker' "$D/p11/app2/logs/compile.log" && [ ! -e "$D/p11/app2/Buffy.ico" ] && [ ! -d "$D/p11/app2/achievements" ]; chk $? "a marker that cannot be removed: the start goes on (exit $code), the log says so, and nothing was written"
 rm -rf "$D/p11"
 
 echo

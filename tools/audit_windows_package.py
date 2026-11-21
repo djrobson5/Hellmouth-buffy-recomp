@@ -111,6 +111,9 @@ def main():
     # 1. the files
     files = []
     for root, dirs, names in os.walk(folder):
+        for d in dirs:  # os.walk lists a link to a folder here and does not enter it
+            if os.path.islink(os.path.join(root, d)):
+                problems.append("a link to a folder: " + os.path.relpath(os.path.join(root, d), folder))
         for n in names:
             p = os.path.join(root, n)
             if os.path.islink(p):

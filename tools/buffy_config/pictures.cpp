@@ -45,7 +45,9 @@ bool ReadAll(const fs::path& path, Bytes& out) {
     return !f.bad();
 }
 
+// false for no bytes too: a picture whose encoding failed comes here empty, and an empty file must not be written and called made
 bool WriteAll(const fs::path& path, const Bytes& data) {
+    if (data.empty()) return false;
     std::ofstream f(path, std::ios::binary | std::ios::trunc);
     if (!f) return false;
     f.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
@@ -204,9 +206,10 @@ void Append(void* context, void* data, int size) {
     out->insert(out->end(), static_cast<uint8_t*>(data), static_cast<uint8_t*>(data) + size);
 }
 
+// empty when the encoder failed (it returns 0)
 Bytes EncodePng(int w, int h, int channels, const uint8_t* pixels) {
     Bytes out;
-    stbi_write_png_to_func(Append, &out, w, h, channels, pixels, w * channels);
+    if (!stbi_write_png_to_func(Append, &out, w, h, channels, pixels, w * channels)) out.clear();
     return out;
 }
 
@@ -401,6 +404,7 @@ Bytes MakeIco(const Canvas& master, const std::vector<int>& sizes) {
         Bytes rgba = Rgba8(c);
         if (d >= 256) {
             images.push_back(EncodePng(d, d, 4, rgba.data()));
+            if (images.back().empty()) return {};  // the caller sees no bytes
             continue;
         }
         Bytes dib;
@@ -499,18 +503,18 @@ bool Make(const fs::path& thumbnails, const fs::path& launch, const fs::path& ou
                         size_t(pick.size) * 3);
         const fs::path file = out / "achievements" / (std::string(pick.id) + ".png");
         if (!WriteAll(file, EncodePng(pick.size, pick.size, 3, crop.data()))) {
-            why = "cannot write " + file.string();
+            why = "cannot write or encode " + file.string();
             return false;
         }
     }
 
     Canvas master = Smaller(ComposeIcon(screen), 256);
     if (!WriteAll(out / "Buffy.png", EncodePng(256, 256, 4, Rgba8(master).data()))) {
-        why = "cannot write " + (out / "Buffy.png").string();
+        why = "cannot write or encode " + (out / "Buffy.png").string();
         return false;
     }
     if (!WriteAll(out / "Buffy.ico", MakeIco(master, {256, 48, 32, 16}))) {
-        why = "cannot write " + (out / "Buffy.ico").string();
+        why = "cannot write or encode " + (out / "Buffy.ico").string();
         return false;
     }
     return true;

@@ -205,7 +205,10 @@ bool MakePicturesImpl(const Layout& layout, const Recipe& recipe, const ReadPict
         return made;
     };
     run.Note("pictures: making the achievement pictures and the icon in " + U8(layout.data) + " (recipe " + std::to_string(recipe.pictures) + ")");
-    fs::remove(layout.PicturesMarker(), ec);  // what is there is not whole until this finishes
+    // what is there is not whole until this finishes, so the marker goes first; one that cannot be removed would go on saying "made" over files being replaced
+    fs::remove(layout.PicturesMarker(), ec);
+    if (ec && Exists(layout.PicturesMarker())) return finish(false, "not made: cannot remove the marker " + U8(layout.PicturesMarker()) + ": " + ec.message());
+    ec.clear();
     fs::remove_all(scratch, ec);
     fs::create_directories(scratch, ec);
     if (ec) return finish(false, "not made: cannot make " + U8(scratch) + ": " + ec.message());
@@ -248,10 +251,10 @@ private:
     Outcome RunSteps(const ReadInputs& read, const ReadPictures& pictures);
     // a step, and a line in the log for the time it took ("time: translate 5300 ms"); the detail follows the time
     template <class Step>
-    bool Timed(const char* phase, Step&& step, const std::string& detail = {}) {
+    bool Timed(const char* phase, Step&& step, const std::function<std::string()>& detail = {}) {
         const int64_t began = NowMs();
         const bool ok = step();
-        run_.Note(std::string("time: ") + phase + " " + Ms(NowMs() - began) + detail);
+        run_.Note(std::string("time: ") + phase + " " + Ms(NowMs() - began) + (detail ? detail() : std::string()));
         return ok;
     }
 
@@ -581,9 +584,11 @@ Outcome Builder::RunSteps(const ReadInputs& read, const ReadPictures& pictures) 
     if (!Timed("translate", [&] { return Translate(); })) return done(false);
     if (!Timed("pictures", [&] { return Pictures(pictures); })) return done(false);
     if (!Timed("plan", [&] { return Plan(); })) return done(false);
-    // all the files, with how many were compiled (the rest were kept from an earlier start) and at how many at once
-    const bool compiled = Timed("compile", [&] { return Compile(); },
-                                " (" + std::to_string(jobs_.size()) + " files compiled, " + std::to_string(std::max<size_t>(recipe_.slots, 1)) + " at a time)");
+    // all the files, with how many were compiled (finished: a build that failed or was stopped says how far it got; the rest were kept from an
+    // earlier start) and at how many at once
+    const bool compiled = Timed("compile", [&] { return Compile(); }, [&] {
+        return " (" + std::to_string(progress_.files_done.load()) + " files compiled, " + std::to_string(std::max<size_t>(recipe_.slots, 1)) + " at a time)";
+    });
     if (!compiled) return done(false);
     if (!Timed("link", [&] { return Link(); })) return done(false);
     if (!Timed("check and install", [&] { return Install(); })) return done(false);

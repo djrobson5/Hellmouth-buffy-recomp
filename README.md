@@ -220,15 +220,15 @@ everything is there. So a start whose DLL is current but whose pictures are not 
 window and in a moment, in a normal start and in `--prepare`; the build makes them after the translation when they are missing. A
 `--relaunched` or `--no-dialogs` start makes none. A picture that cannot be made (the disc lacks a file, the tool is gone) is never
 what stops a start: `logs\compile.log` gets a line (`pictures: not made: <reason>`, added to the log, not replacing it), no marker is
-written, and the next start tries again. The game finds the pictures in the data folder (`achievements.cpp`, after the folder beside the
+written, and the next start tries again. The game finds the pictures in the data folder (`achievements.cpp`, before the folder beside the
 exe), and sets `Buffy.ico` on its window and the taskbar (`window_icon.cpp`; without it the window keeps the executable's icon).
 
 **The shortcut.** Each normal start (not `--prepare`, `--relaunched` or `--no-dialogs`), once the game's code and the pictures are in place,
 makes `Buffy the Vampire Slayer.lnk` beside `Buffy.exe` or brings it up to date (`sdk/runtime/app/shortcut.cpp`, `IShellLinkW` and
 `IPersistFile`): target the executable, working folder its folder, icon `<data>\Buffy.ico` (the executable's own icon when the pictures were
-not made), and `--data "<folder>"` when the start was given one. A `.lnk` holds absolute paths, so the file is read (never resolved) and written
+not made), and `--data "<folder>"` when the data folder is not the exe's (from `--data` or `RECOMPLAUNCHER_DATA`). A `.lnk` holds absolute paths, so the file is read (never resolved) and written
 again when what it holds differs from what the start knows, as it does after the folder was moved; when it already holds the same it is left
-alone. It is best effort: a read only folder or a COM failure is a line in `logs\buffy.log` and the game starts. It writes nothing outside the
+alone. It is best effort (none is made for a path of 260 characters or more, or one that starts `\\?\`, which a shortcut cannot hold; a value that cannot be set is not saved): a read only folder or a COM failure is a line in `logs\buffy.log` and the game starts. It writes nothing outside the
 folder of the executable (no Desktop, no Start menu), and the audit refuses a `.lnk` in the zip, as it holds the paths of the machine it was
 made on.
 

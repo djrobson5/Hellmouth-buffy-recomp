@@ -619,7 +619,8 @@ bool PrepareGameCode(const GameFiles& game) {
     }
 
     BuildLock lock;
-    if (State(layout, recipe) != gb::DllState::Current) {  // a copy started earlier may have built it while this one waited
+    const bool built_here = State(layout, recipe) != gb::DllState::Current;  // else a copy started earlier built it while this one waited
+    if (built_here) {
         switch (BuildWithWindow(game, layout, recipe)) {
             case Result::Start:
                 break;
@@ -635,7 +636,9 @@ bool PrepareGameCode(const GameFiles& game) {
                 return false;
         }
     }
-    EnsurePictures(game, layout, recipe);  // made by the build, unless it was a copy started earlier that built the DLL
+    // this process's build made the pictures, or tried and logged why not (and tries again at the next start): only a DLL that a copy started
+    // earlier built has not had the step looked at here
+    if (!built_here) EnsurePictures(game, layout, recipe);
     return LoadCode(CodeDll(layout));
 }
 
@@ -648,6 +651,7 @@ int PrepareOnly(const GameFiles& game) {
         if (Args().clean_work) DeleteWork(layout);
     };
     if (State(layout, recipe) == gb::DllState::Current) {
+        if (!gb::PicturesCurrent(layout, recipe)) PrintOut("progress 0.000 Making the achievement pictures and the icon");
         EnsurePictures(game, layout, recipe);  // the DLL being current says nothing of the pictures
         PrintOut("progress 1.000 The game's code is up to date");
         clean();

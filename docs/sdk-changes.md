@@ -71,7 +71,7 @@ What this port changed:
     recipe's version, `kPicturesRecipe`), so a start with a current DLL makes them too (`EnsurePictures`, in a normal start and in `--prepare`).
     A picture that cannot be made is a line in `logs\compile.log` and never a failure. `Icon()` looks in the data folder after the folder beside the
     exe, and `app::SetWindowIcons` (Windows) sets `<data>\Buffy.ico` on the game window. `shortcut.cpp` (`app::UpdateShortcut`, Windows, from `main.cpp`
-    after `PrepareGameCode`) keeps `<title>.lnk` beside the exe, with the data folder's icon and a given `--data`, written again when its target or
+    after `PrepareGameCode`) keeps `<title>.lnk` beside the exe, with the data folder's icon and a `--data` when the data folder is not the exe's, written again when its target or
     arguments are not this start's.
   - `sdk/tools/LLVM-LICENSE.txt`: the licence text for the clang and lld the first start runs.
   - `sdk/tools/tool.manifest`: the manifest the Windows command line tools carry (UTF-8 command line and file names, long paths).

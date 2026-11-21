@@ -70,12 +70,18 @@ void UpdateShortcut() {
     // a restart for a level and a launcher's start are not the player starting the game
     if (Args().relaunched || Args().no_dialogs) return;
     const fs::path exe = ExePath();
+    // IShellLinkW holds MAX_PATH characters and no \\?\ paths: a shortcut to such a folder would be cut or refused, so none is made
+    if (exe.native().rfind(L"\\\\?\\", 0) == 0 || exe.native().size() >= MAX_PATH) {
+        LOGW("shortcut: not made, the path of the executable is too long for a shortcut (%ls)", exe.c_str());
+        return;
+    }
     const fs::path file = exe.parent_path() / (std::wstring(kGame.title) + L".lnk");
     Wanted want;
     want.target = exe.wstring();
     want.folder = exe.parent_path().wstring();
-    if (!Args().data.empty()) want.arguments = L"--data " + QuotedPath(Args().data);
+    // the data folder, when it is not the exe's: from --data, or from RECOMPLAUNCHER_DATA (DataDir says which), as a start from the shortcut must find the same saves
     std::error_code ec;
+    if (!fs::equivalent(DataDir(), ExeDir(), ec) || ec) want.arguments = L"--data " + QuotedPath(DataDir());
     const fs::path icon = DataDir() / L"Buffy.ico";
     if (fs::is_regular_file(icon, ec)) {
         want.icon = icon.wstring();
@@ -94,13 +100,18 @@ void UpdateShortcut() {
         if (had && SUCCEEDED(persist->Load(file.c_str(), STGM_READ)) && Holds(link, want)) {
             LOGR("shortcut: %ls is up to date", file.c_str());
         } else {
-            link->SetPath(want.target.c_str());
-            link->SetArguments(want.arguments.c_str());
-            link->SetWorkingDirectory(want.folder.c_str());
-            link->SetIconLocation(want.icon.c_str(), want.icon_index);
-            link->SetDescription(kGame.title);
-            HRESULT saved = persist->Save(file.c_str(), TRUE);
-            if (SUCCEEDED(saved)) LOGR("shortcut: %ls %s", file.c_str(), had ? "written again (what it held was not this start's)" : "made");
+            const HRESULT set = [&] {
+                HRESULT r = link->SetPath(want.target.c_str());
+                if (SUCCEEDED(r)) r = link->SetArguments(want.arguments.c_str());
+                if (SUCCEEDED(r)) r = link->SetWorkingDirectory(want.folder.c_str());
+                if (SUCCEEDED(r)) r = link->SetIconLocation(want.icon.c_str(), want.icon_index);
+                if (SUCCEEDED(r)) r = link->SetDescription(kGame.title);
+                return r;
+            }();
+            // what could not be set is not saved: a half made shortcut would be worse than none
+            HRESULT saved = FAILED(set) ? set : persist->Save(file.c_str(), TRUE);
+            if (FAILED(set)) LOGW("shortcut: not written, a value of it could not be set (0x%08lX)", (unsigned long)set);
+            else if (SUCCEEDED(saved)) LOGR("shortcut: %ls %s", file.c_str(), had ? "written again (what it held was not this start's)" : "made");
             else LOGW("shortcut: %ls could not be written (0x%08lX): the folder may be read only; the game starts all the same", file.c_str(), (unsigned long)saved);
         }
     }
