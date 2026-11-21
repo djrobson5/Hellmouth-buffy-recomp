@@ -13,7 +13,8 @@
 #
 # Windows: the exe and the game code DLL, the tools, check_game_code_dll.sh, check_config_tool.sh, package_windows.sh (with the
 # recomplauncher.json check and both audits), sim_first_start.sh.
-# Mac: the static build (build/app), the game-code-dylib build with llvm-mingw (build/app-dylib), check_game_code_dylib.sh and
+# Mac: tools/mac/keeper_check.sh (the keeper that a start by RecompLauncher runs under, without the game), the static build (build/app),
+# the game-code-dylib build with llvm-mingw (build/app-dylib), check_game_code_dylib.sh and
 # tools/mac/sim_first_start_mac.sh (the Mac first start, without a window, from the disc), and with MAC_DEPS the same build against the
 # source-built libraries (build/app-dylib-deps), check_game_code_dylib.sh, the first start again, Buffy --check-game-code (loads the game
 # code without a window) and tools/mac/check_mac_deps.sh.
@@ -91,6 +92,7 @@ if [ "$WIN" = 1 ]; then
 fi
 
 if [ "$MAC" = 1 ]; then
+    counted "mac keeper" "$LOGS/keeper.log" 'bash tools/mac/keeper_check.sh'
     run "mac build" "$LOGS/mac-build.log" 'env -u MAC_DEPS sdk/host/build.sh -r . -g generated/game -o build/app -n Buffy'
     [ -x build/app/Buffy ] || fail "mac build" "$LOGS/mac-build.log" "build/app/Buffy was not made"
     echo "OK mac build"
