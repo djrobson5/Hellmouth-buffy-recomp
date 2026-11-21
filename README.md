@@ -214,6 +214,12 @@ output and a line for every command and its exit code go to `logs\compile.log`. 
 try (antivirus, a long path) and the last lines of the log. A process started with `--relaunched` (the game restarts itself to load a
 level) or `--no-dialogs` never builds, and ends the run (exit 7 or 8) when the DLL is not there or is stale.
 
+**For a launcher.** `Buffy.exe --prepare --game=<path> [--data <dir>] [--clean-work]` builds with no window and no questions, prints
+`progress <0 to 1> <what it is doing>` lines on stdout (the fraction counts the compile by bytes of source), exits 0 when `Buffy.dll` is
+built and its stamp checks, and otherwise 9 with one line on stderr (`error: <step>: <reason>`) and the details in `logs\compile.log`;
+the game is not started and the settings are not read. `--clean-work` deletes the work folder afterwards. The lines go to the
+launcher's pipe, or to the console the program was started from.
+
 ## Achievements
 
 The original game has no achievements, so Hellmouth adds 28: one for each boss, plus kills (three of them with particular weapons), secrets, finishing the game on

@@ -53,6 +53,8 @@ What this port changed:
     selectable and is used when Vulkan cannot start); the Windows help says what Vulkan lacks.
   - `sdk/runtime/core/input.cpp`: `HeldOnAnyController` (the face buttons, as XInput's masks) for the first start's window, and `Init`
     can be called twice.
+  - `--prepare` (`app::PrepareOnly`, in `game_code.cpp`, called from `main.cpp` before the settings are read): the same build with no
+    window, `progress` lines on stdout, exit 0 or `kExitBuildFailed` with the reason on stderr.
   - `sdk/tools/recomp`: `[xbe] library`, which only a DLL build needs, makes the recompiler write `exports.def` (what the DLL exports: its tables and one
     `__imp__sub_XXXXXXXX` name for each function) and `imports.def` (the same, with `sub_XXXXXXXX` aliases, for the executable's
     import library). `IMAGE_LIBRARY` and `IMAGE_SECTIONS_HASH` are in `image_symbols.h`, so the executable has them without the DLL: the

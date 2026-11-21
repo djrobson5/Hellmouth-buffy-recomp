@@ -17,6 +17,7 @@
 #include <chrono>
 #include <csignal>
 #include <cwchar>
+#include <fstream>
 #include <thread>
 
 #include <imgui.h>
@@ -330,7 +331,13 @@ void Fail(int code, const std::wstring& message) {
     if (n > 0) WideCharToMultiByte(CP_UTF8, 0, message.c_str(), int(message.size()), narrow.data(), n, nullptr, nullptr);
     LOGE("Exit (%d): %s", code, narrow.c_str());
     logx::Flush();
-    if (Args().prepare) PrintErr("error: " + narrow);
+    if (Args().prepare) {
+        PrintErr("error: " + narrow);
+        // the launcher looks for the reason in logs\compile.log as well: this run's, not an earlier build's
+        std::error_code ec;
+        std::filesystem::create_directories(LogFolder(), ec);
+        std::ofstream(LogFolder() / "compile.log", std::ios::binary | std::ios::trunc) << "FAILED: " << narrow << "\r\n";
+    }
     if (!Args().no_dialogs) MessageBoxW(nullptr, message.c_str(), kGame.short_title, MB_ICONERROR);
     // as kernel::Shutdown: NVIDIA's Streamline crashes in its own clean-up at exit, so with it loaded no DLL clean-up
     if (GetModuleHandleW(L"sl.interposer.dll")) TerminateProcess(GetCurrentProcess(), UINT(code));
@@ -471,6 +478,14 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     if (!app::Args().log.empty()) log = app::Args().log.stem().string();
     logx::Init(app::LogDir().string(), log, relaunched);
     if (data_error) LOGE("data folder %s could not be made: %s", app::DataDir().string().c_str(), data_error.message().c_str());
+    if (app::Args().prepare) {
+        // a launcher's setup: the game's code built, nothing started, no settings read (a settings file that is wrong is no
+        // reason for it to fail)
+        LOGR("%ls (%s), --prepare", app::kGame.title, IMAGE_XBE);
+        app::GameFiles game;
+        if (!app::ChooseGame(game)) return app::kExitNoGame;
+        return app::PrepareOnly(game);
+    }
     app::Load();
     if (app::kGame.init) app::kGame.init();
     if (relaunched && !logx::kVerbose) LOGR("Relaunched: %s", IMAGE_XBE);

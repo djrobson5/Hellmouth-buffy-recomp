@@ -228,6 +228,8 @@ std::string Sha1(const std::vector<uint8_t>& data);  // lower case hex
 // relaunched process and --no-dialogs never build and end the run (kExitNoGameCode or kExitStaleGameCode) when
 // it is not there. False after telling the player why the game cannot start.
 bool PrepareGameCode(const GameFiles& game);
+// --prepare: the same, with no window and no questions; the exit code of the run (kExitOk, or kExitBuildFailed with the reason on stderr)
+int PrepareOnly(const GameFiles& game);
 // a line on this process's stdout or stderr (the launcher's pipe, or the console it was typed in); UTF-8, a newline added
 void PrintOut(const std::string& line);
 void PrintErr(const std::string& line);

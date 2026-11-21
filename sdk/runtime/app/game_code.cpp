@@ -594,8 +594,59 @@ bool PrepareGameCode(const GameFiles& game) {
     }
     return LoadCode(CodeDll(layout));
 }
+
+// --prepare: the same build with no window, for a launcher. progress lines on stdout, the reason on stderr
+int PrepareOnly(const GameFiles& game) {
+    const gb::Layout layout = MakeLayout();
+    const gb::Recipe recipe = gamecode::Recipe(Slots());
+    BuildLock lock;
+    auto clean = [&] {
+        if (Args().clean_work) DeleteWork(layout);
+    };
+    if (State(layout, recipe) == gb::DllState::Current) {
+        PrintOut("progress 1.000 The game's code is up to date");
+        clean();
+        return kExitOk;
+    }
+    WinRunner runner(layout.Log());  // a fresh compile.log: every reason below is in it as well as on stderr
+    auto failed = [&](const std::string& line, bool in_log) {
+        LOGE("Game code: %s", line.c_str());
+        logx::Flush();
+        if (!in_log) runner.Note("FAILED: " + line);
+        PrintErr("error: " + line);
+        return kExitBuildFailed;
+    };
+    if (std::string blocker = gb::Blocker(layout, recipe); !blocker.empty()) return failed(blocker, false);
+    gb::Progress progress;
+    int last_per_mille = -1;
+    std::string last_text;
+    auto report = [&] {
+        std::string text = progress.Text();
+        int per_mille = int(progress.Fraction() * 1000.0);
+        if (per_mille == last_per_mille && text == last_text) return;
+        last_per_mille = per_mille;
+        last_text = text;
+        char fraction[16];
+        std::snprintf(fraction, sizeof fraction, "%.3f", progress.Fraction());
+        PrintOut(std::string("progress ") + fraction + " " + text);
+    };
+    progress.changed = report;
+    report();
+    gb::Failure failure;
+    gb::Outcome outcome = gb::Build(layout, recipe, [&](gb::Inputs& in, std::string& why) { return ReadDisc(game, in, why); }, runner, progress, failure);
+    if (outcome != gb::Outcome::Built) {
+        std::string line = outcome == gb::Outcome::Cancelled ? std::string("stopped") : failure.Line();
+        if (!failure.hint.empty()) line += " " + failure.hint;
+        return failed(line + " (details: " + PathUtf8(layout.Log()) + ")", true);  // the build noted its own failure
+    }
+    PrintOut("progress 1.000 Done");
+    LOGR("Game code: built %s", PathUtf8(CodeDll(layout)).c_str());
+    clean();
+    return kExitOk;
+}
 #else
 bool PrepareGameCode(const GameFiles&) { return true; }
+int PrepareOnly(const GameFiles&) { return kExitOk; }  // the code is in the executable: nothing to build
 #endif
 
 }  // namespace app
