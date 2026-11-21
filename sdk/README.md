@@ -28,6 +28,8 @@ This tool was originally created for porting [Tom Clancy's Splinter Cell: Double
    xbe_symbols assets\default.xbe sdk\xdk --out config\game.toml
    ```
    This prints the XBE's library versions, picks `xdk/<build>/signatures.toml` and finds the XDK functions and data the host replaces, then writes the config: `[xbe]` with a partition count and the code sections, the `layout.toml` include, `[symbols]` and `[data]`. Misses and ambiguous names are listed and left at 0, which become trapping stubs. It stops when no `signatures.toml` exists for the XBE's build.
+
+   Only a build with the recompiled code in a DLL beside the executable (CMake option `XBE_GAME_CODE_DLL`, MinGW only) needs to know the DLL's name: add `--library <exe>.dll`, which writes `library = "<exe>.dll"` to `[xbe]`, where `<exe>` is the name of the `add_xbe_image` target. CMake stops at configure when the config's `library` is not `<target>.dll`. Without `library` the recompiler writes no `exports.def` or `imports.def`, and the code is linked into the executable as usual.
 4. Fill in `app::kGame` in `src/common/game_info.cpp`: title, window name, log and settings file names, splash, the xbe to exe table, game options, and the hooks for loading, the window, drawing and the pads.
 5. Game hooks go in `src/game`. Define `X86_FUNC(sub_XXXXXXXX)` to replace a recompiled function, and call `__imp__sub_XXXXXXXX` to reach the original. `python sdk/tools/symbols/xbe2pe.py config/game.toml game.exe` writes a flat PE with the recompiled functions as exports for Ghidra.
 6. Run `build.bat`. One game repo can build several images, one config and `add_xbe_image` each; `--name` sets the config's `generated/<name>`, which is the folder argument of `add_xbe_image`.

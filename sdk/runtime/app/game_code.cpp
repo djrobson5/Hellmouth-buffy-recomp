@@ -3,12 +3,11 @@
 #include "app/app.h"
 
 #ifdef XBE_GAME_CODE_DLL
-#include "core/log.h"
-#include "image_symbols.h"
+#include <cstring>
 
-namespace dispatch {
-bool Load(const std::filesystem::path& dll);  // cpu/dispatch.cpp
-}
+#include "core/log.h"
+#include "cpu/dispatch.h"
+#include "image_symbols.h"
 #endif
 
 namespace app {
@@ -19,8 +18,23 @@ bool PrepareGameCode(const GameFiles&) {
     std::error_code ec;
     if (!std::filesystem::exists(dll, ec))
         Fail(kExitNoGameCode, L"The game's code, " + dll.filename().wstring() + L", is missing from " + dll.parent_path().wstring() + L".");
-    if (!dispatch::Load(dll))
-        Fail(kExitNoGameCode, dll.filename().wstring() + L" would not load: it may be damaged, or made for another version of the game.");
+    // the executable's name for this image (the DLL's imports name it)
+    std::wstring exe_name = std::filesystem::path(IMAGE_LIBRARY).stem().wstring() + L".exe";
+    for (auto& [xbe, exe] : kGame.images)
+        if (_stricmp(xbe, IMAGE_XBE) == 0) exe_name = std::wstring(exe, exe + std::strlen(exe)) + L".exe";
+    dispatch::LoadResult r = dispatch::Load(dll, exe_name);
+    switch (r.status) {
+        case dispatch::LoadStatus::Ok:
+            break;
+        case dispatch::LoadStatus::WrongExeName:
+            Fail(kExitNoGameCode, L"This program must be named " + exe_name + L", because the game's code, " + dll.filename().wstring() +
+                                      L", is built to work with a program of that name. Rename it back.");
+        case dispatch::LoadStatus::NotLoaded:
+            Fail(kExitNoGameCode, dll.filename().wstring() + L" would not load (Windows error " + std::to_wstring(r.error) +
+                                      L"): it may be damaged, or made for another version of the game.");
+        case dispatch::LoadStatus::NoTables:
+            Fail(kExitNoGameCode, dll.filename().wstring() + L" is not the game's code: it lacks the tables that describe it.");
+    }
     LOGR("Game code: %s", dll.string().c_str());
     return true;
 }

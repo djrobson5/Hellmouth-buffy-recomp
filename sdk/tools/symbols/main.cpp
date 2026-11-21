@@ -1322,7 +1322,7 @@ int Scan(const fs::path& xbe_path, const fs::path& xdk, const fs::path& out, con
     PrintScan(x, symbols, data, report);
 
     std::string s = XbeTable(xbe_path, x, build, name, Partitions(img), sections);
-    s += "library = \"" + library + "\"  # <exe>.dll, which the executable delay loads\n";
+    if (!library.empty()) s += "library = \"" + library + "\"  # <exe>.dll, which the executable delay loads\n";
     s += "\n# extra entry points\n[functions]\n";
     s += "\n# functions the host replaces or calls by name, 0 where the image has none\n[symbols]\n" + Table(symbols);
     s += "\n[data]\n" + Table(data);
@@ -1358,9 +1358,9 @@ int main(int argc, char** argv) {
         }
         return Sign(out, std::vector<fs::path>(a.begin() + 1, a.end()), sk);
     }
-    if (a.size() != 2 || library.empty()) {
+    if (a.size() != 2) {
         std::fprintf(stderr,
-                     "usage: xbe_symbols <game.xbe> <sdk>/xdk --library <exe>.dll [--out config/game.toml] [--name game]\n"
+                     "usage: xbe_symbols <game.xbe> <sdk>/xdk [--library <exe>.dll] [--out config/game.toml] [--name game]\n"
                      "       xbe_symbols --sign <config.toml>... --out signatures.toml [--skip name,...]\n");
         return 1;
     }

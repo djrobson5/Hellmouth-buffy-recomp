@@ -130,6 +130,8 @@ How the two parts meet, in the order a call takes:
 - The executable calls into the DLL through `imports.def` (written by the recompiler beside the code), an import library of
   `__imp__sub_XXXXXXXX` names and `sub_XXXXXXXX` aliases for them, delay loaded: `PrepareGameCode` loads `Buffy.dll` from beside
   the executable by its full path before the first call, and finds the tables (`X86FuncMappings` and the rest) with `GetProcAddress`.
+  The DLL's imports name `Buffy.exe`, so the program has to keep that name: `dispatch::Load` checks it first and says so, as Windows' own
+  message for a program with another name would only say a module could not be found.
 - A C++ exception thrown in the executable unwinds through the DLL's frames: the DLL catches with `catch (...)` and asks the
   executable (`x86_try_resume`) whether it was a resume for that frame, as it can't name the executable's exception type.
 

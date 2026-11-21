@@ -232,7 +232,7 @@ bool CodeGen::Run() {
     // recompiled body traps, so the host override still links
     std::string syms = "#pragma once\n";
     syms += F("#define IMAGE_XBE \"%s\"\n", fs::path(an_.cfg.xbe_path).filename().string().c_str());
-    // the game code DLL the executable loads, and the image's code and data without its certificate: another copy of
+    // the game code DLL the executable loads (empty without one), and the image's code and data without its certificate: another copy of
     // the release whose file differs only there is accepted (runtime/xbe/image_hash.h). Both are the executable's, not
     // the DLL's, which is built on the player's PC
     syms += F("#define IMAGE_LIBRARY \"%s\"\n", an_.cfg.library.c_str());
@@ -317,21 +317,24 @@ bool CodeGen::Run() {
     WriteIfChanged(out_ / "x86_func_mapping.cpp", map);
 
     // the game code DLL exports its tables and each recompiled body (one name a function: PE allows 65535); the
-    // executable's import library also takes a function's own name, for the calls it makes where it has no override
-    std::string library = F("LIBRARY %s\nEXPORTS\n", an_.cfg.library.c_str());
-    std::string exports;
-    std::string aliases;
-    for (const char* table : {"X86FuncMappings", "X86Continuations", "X86CodeBase", "X86CodeEnd", "X86EntryPoint"})
-        exports += F("    %s DATA\n", table);
-    for (const std::vector<uint32_t>* list : {&funcs, &absent}) {
-        for (uint32_t f : *list) {
-            std::string name = FuncName(f);
-            exports += F("    __imp__%s\n", name.c_str());
-            aliases += F("    %s == __imp__%s\n", name.c_str(), name.c_str());
+    // executable's import library also takes a function's own name, for the calls it makes where it has no override.
+    // Only a build with the code in a DLL has a [xbe] library, and needs these.
+    if (!an_.cfg.library.empty()) {
+        std::string library = F("LIBRARY %s\nEXPORTS\n", an_.cfg.library.c_str());
+        std::string exports;
+        std::string aliases;
+        for (const char* table : {"X86FuncMappings", "X86Continuations", "X86CodeBase", "X86CodeEnd", "X86EntryPoint"})
+            exports += F("    %s DATA\n", table);
+        for (const std::vector<uint32_t>* list : {&funcs, &absent}) {
+            for (uint32_t f : *list) {
+                std::string name = FuncName(f);
+                exports += F("    __imp__%s\n", name.c_str());
+                aliases += F("    %s == __imp__%s\n", name.c_str(), name.c_str());
+            }
         }
+        WriteIfChanged(out_ / "exports.def", library + exports);
+        WriteIfChanged(out_ / "imports.def", library + exports + aliases);
     }
-    WriteIfChanged(out_ / "exports.def", library + exports);
-    WriteIfChanged(out_ / "imports.def", library + exports + aliases);
 
     std::string stats = F("functions %zu\ninstructions %zu\n", funcs.size(), insn_count_);
     for (auto& [k, v] : unimpl_) stats += F("unimplemented %s %zu\n", k.c_str(), v);

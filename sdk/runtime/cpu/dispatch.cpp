@@ -9,6 +9,7 @@
 
 #include <cxxabi.h>
 #include <filesystem>
+#include <string>
 #include <typeinfo>
 #endif
 
@@ -21,6 +22,7 @@
 #include <vector>
 
 #include "core/log.h"
+#include "cpu/dispatch.h"
 #include "cpu/x86_ops.h"
 #include "kernel/kernel.h"
 
@@ -64,20 +66,26 @@ constexpr uint32_t kKernelThunkBase = 0xFE000000;
 namespace dispatch {
 
 #ifdef XBE_GAME_CODE_DLL
-// the game code DLL: its tables come by name, as the delay loaded imports carry only functions
-bool Load(const std::filesystem::path& dll) {
+// the game code DLL: its tables come by name, as the delay loaded imports carry only functions. The DLL's imports name the
+// executable (Buffy.exe), so Windows can only bind them when the running executable has that name: LoadLibraryW then fails with
+// "the specified module could not be found", which tells the player nothing, so the name is checked first.
+LoadResult Load(const std::filesystem::path& dll, const std::wstring& exe_name) {
+    wchar_t self[32768];
+    DWORD n = GetModuleFileNameW(nullptr, self, DWORD(sizeof(self) / sizeof(self[0])));
+    std::wstring running = std::filesystem::path(std::wstring(self, n)).filename().wstring();
+    if (_wcsicmp(running.c_str(), exe_name.c_str()) != 0) return {LoadStatus::WrongExeName, 0};
     HMODULE m = LoadLibraryW(dll.c_str());
-    if (!m) return false;
+    if (!m) return {LoadStatus::NotLoaded, GetLastError()};
     g_mappings = reinterpret_cast<const X86FuncMapping*>(GetProcAddress(m, "X86FuncMappings"));
     g_continuations = reinterpret_cast<const uint32_t*>(GetProcAddress(m, "X86Continuations"));
     auto* lo = reinterpret_cast<const uint32_t*>(GetProcAddress(m, "X86CodeBase"));
     auto* hi = reinterpret_cast<const uint32_t*>(GetProcAddress(m, "X86CodeEnd"));
     auto* entry = reinterpret_cast<const uint32_t*>(GetProcAddress(m, "X86EntryPoint"));
-    if (!g_mappings || !g_continuations || !lo || !hi || !entry) return false;
+    if (!g_mappings || !g_continuations || !lo || !hi || !entry) return {LoadStatus::NoTables, 0};
     g_lo = *lo;
     g_hi = *hi;
     g_entry = *entry;
-    return true;
+    return {LoadStatus::Ok, 0};
 }
 #endif
 

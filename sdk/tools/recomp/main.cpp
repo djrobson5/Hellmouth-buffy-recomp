@@ -210,10 +210,6 @@ int main(int argc, char** argv) {
     Config cfg;
     fs::path cfg_path = args[0];
     if (!LoadConfig(cfg_path, cfg, xdk_dir)) return 1;
-    if (cfg.library.empty()) {
-        std::fprintf(stderr, "%s: [xbe] needs library = \"<exe>.dll\", the game code DLL the executable loads\n", args[0].c_str());
-        return 1;
-    }
     for (auto& [name, locs] : cfg.abi)
         if (!cfg.symbols.count(name)) {
             std::fprintf(stderr, "%s: [abi] %s is not a [symbols] name\n", args[0].c_str(), name.c_str());

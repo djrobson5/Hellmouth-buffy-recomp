@@ -29,11 +29,11 @@ What this port changed:
     compile without a C++ library.
   - `sdk/runtime/app/game_code.cpp`, `app.h`, `main.cpp`: `PrepareGameCode` loads `IMAGE_LIBRARY` from beside the executable and ends
     the run with `kExitNoGameCode` when it is missing. Compiling it on the first start is not here yet. `Sha1` is public.
-  - `sdk/tools/recomp`: `[xbe] library` is required, and the recompiler writes `exports.def` (what the DLL exports: its tables and one
+  - `sdk/tools/recomp`: `[xbe] library`, which only a DLL build needs, makes the recompiler write `exports.def` (what the DLL exports: its tables and one
     `__imp__sub_XXXXXXXX` name for each function) and `imports.def` (the same, with `sub_XXXXXXXX` aliases, for the executable's
     import library). `IMAGE_LIBRARY` and `IMAGE_SECTIONS_HASH` are in `image_symbols.h`, so the executable has them without the DLL: the
     hash used to come from the generated `x86_func_mapping.cpp`, which the DLL now holds. Hooks are declared `X86_HOST_API` (no
-    separate export header: the declaration exports them under mingw). `sdk/tools/symbols` takes `--library`, as do the templates.
+    separate export header: the declaration exports them under mingw). `sdk/tools/symbols` takes an optional `--library`.
   - `sdk/tools/LLVM-LICENSE.txt`: the licence text for the clang and lld the first start runs.
   - `sdk/cmake/XbeRecomp.cmake`: `XBE_GAME_CODE_DLL` leaves the generated sources out of the executable, gives it the import library, the
     delay loading and the module definition file, and adds the `game_code_dll` target, which builds the DLL with the first start's

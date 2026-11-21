@@ -111,7 +111,28 @@ set_source_files_properties(${XBE_SDK_DIR}/runtime/gpu/spirv.cpp PROPERTIES INCL
 # it holds only the recompiled code: it imports the runtime and its overrides from the executable, which exports them
 # (X86_HOST_API and X86_FUNC in cpu/x86_ops.h, host_exports.def.in), and the executable imports its recompiled functions
 # from the DLL by the names of imports.def, delay loaded.
-function(xbe_game_code_dll target GEN GEN_SOURCES)
+function(xbe_game_code_dll target GEN GEN_SOURCES CONFIG_FILE)
+    # the DLL's name is the one the executable delay loads and imports.def names: the config's [xbe] library must be <target>.dll
+    # (the executable's name is <target>.exe, and the DLL's imports name it). A config that is not there yet (build.bat writes it
+    # at the first build) is not checked.
+    if(EXISTS ${CONFIG_FILE})
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CONFIG_FILE})
+        set(config_library "")
+        file(STRINGS ${CONFIG_FILE} config_library_line REGEX "^library[ \t]*=")
+        if(config_library_line MATCHES "^library[ \t]*=[ \t]*\"([^\"]*)\"")
+            set(config_library "${CMAKE_MATCH_1}")
+        endif()
+        if(NOT config_library STREQUAL "${target}.dll")
+            if(config_library)
+                set(config_problem "has [xbe] library = \"${config_library}\"")
+            else()
+                set(config_problem "has no [xbe] library")
+            endif()
+            message(FATAL_ERROR "${CONFIG_FILE} ${config_problem}, but a build with XBE_GAME_CODE_DLL needs library = \"${target}.dll\": "
+                "the DLL is named after the executable's target (${target}), as its imports name ${target}.exe and the executable "
+                "delay loads ${target}.dll. Set it in [xbe] (xbe_symbols writes it from --library ${target}.dll).")
+        endif()
+    endif()
     set(CODE ${CMAKE_BINARY_DIR}/game_code)
     get_filename_component(llvm_bin ${CMAKE_CXX_COMPILER} DIRECTORY)
     find_program(XBE_LLVM_LIB llvm-lib HINTS ${llvm_bin} REQUIRED NO_DEFAULT_PATH)
@@ -286,6 +307,6 @@ target_link_libraries(${target} PRIVATE tomlplusplus::tomlplusplus $<LINK_ONLY:S
         message(STATUS "${target}: PGO with ${pgo_profile}")
     endif()
     if(XBE_GAME_CODE_DLL)
-        xbe_game_code_dll(${target} ${GEN} "${GEN_SOURCES}")
+        xbe_game_code_dll(${target} ${GEN} "${GEN_SOURCES}" ${CMAKE_CURRENT_SOURCE_DIR}/config/${config})
     endif()
 endfunction()
