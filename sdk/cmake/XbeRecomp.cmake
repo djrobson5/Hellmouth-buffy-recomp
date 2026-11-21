@@ -54,7 +54,12 @@ FetchContent_MakeAvailable(zydis tomlplusplus imgui SDL3 glslang)
 # for it, XBE_HOST_TOOLS = the folder holding its xbe_recomp and xbe_symbols
 set(XBE_PGO "" CACHE STRING "Profile-guided optimisation: GEN (a measuring build), OFF, or empty (use pgo/<target>.profdata when there)")
 set(XBE_HOST_TOOLS "" CACHE PATH "Folder with xbe_recomp and xbe_symbols built for this machine, when cross-compiling")
-if(XBE_HOST_TOOLS)
+# the generated code is already in generated/<dir> (made by tools/regen.sh on another machine): no recompile step, and
+# the tools aren't built, which a cross build to Windows from another OS cannot run
+option(XBE_USE_GENERATED "Build from the existing generated/<dir> folder instead of running xbe_recomp" OFF)
+if(XBE_USE_GENERATED)
+    # nothing to build
+elseif(XBE_HOST_TOOLS)
     foreach(tool xbe_recomp xbe_symbols)
         add_executable(${tool} IMPORTED GLOBAL)
         set_target_properties(${tool} PROPERTIES IMPORTED_LOCATION ${XBE_HOST_TOOLS}/${tool}${CMAKE_HOST_EXECUTABLE_SUFFIX})
@@ -104,16 +109,18 @@ function(add_xbe_image target xbe config partitions game_dir)
         list(APPEND GEN_SOURCES ${GEN}/x86_recomp.${i}.cpp)
     endforeach()
     file(GLOB configs CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/config/*.toml ${XBE_SDK_DIR}/xdk/*/*.toml)
-    add_custom_command(
-        OUTPUT ${GEN}/codegen.stamp
-        BYPRODUCTS ${GEN_SOURCES} ${GEN}/x86_recomp_shared.h ${GEN}/image_symbols.h
-        COMMAND xbe_recomp config/${config} --xdk ${XBE_SDK_DIR}/xdk
-        COMMAND ${CMAKE_COMMAND} -E touch ${GEN}/codegen.stamp
-        DEPENDS xbe_recomp ${configs} ${CMAKE_CURRENT_SOURCE_DIR}/assets/${xbe}
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        COMMENT "Recompiling ${xbe}"
-        VERBATIM)
-    add_custom_target(recompile_${target} DEPENDS ${GEN}/codegen.stamp)
+    if(NOT XBE_USE_GENERATED)
+        add_custom_command(
+            OUTPUT ${GEN}/codegen.stamp
+            BYPRODUCTS ${GEN_SOURCES} ${GEN}/x86_recomp_shared.h ${GEN}/image_symbols.h
+            COMMAND xbe_recomp config/${config} --xdk ${XBE_SDK_DIR}/xdk
+            COMMAND ${CMAKE_COMMAND} -E touch ${GEN}/codegen.stamp
+            DEPENDS xbe_recomp ${configs} ${CMAKE_CURRENT_SOURCE_DIR}/assets/${xbe}
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            COMMENT "Recompiling ${xbe}"
+            VERBATIM)
+        add_custom_target(recompile_${target} DEPENDS ${GEN}/codegen.stamp)
+    endif()
     set_source_files_properties(${GEN_SOURCES} PROPERTIES GENERATED TRUE
         COMPILE_OPTIONS "-O2;-fno-strict-aliasing;-Wno-unused-label;-Wno-parentheses-equality;-Wno-unused-variable")
     file(GLOB GAME_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/${game_dir}/*.cpp)
@@ -140,7 +147,9 @@ function(add_xbe_image target xbe config partitions game_dir)
     file(CONFIGURE OUTPUT ${XBE_RC} CONTENT "${rc}")
     set_property(SOURCE ${XBE_RC} APPEND PROPERTY OBJECT_DEPENDS ${XBE_SDK_DIR}/runtime/app/app.manifest)
     add_executable(${target} WIN32 ${XBE_RUNTIME_SOURCES} ${XBE_HOST_SOURCES} ${GAME_SOURCES} ${GEN_SOURCES} ${XBE_IMGUI_SOURCES} ${XBE_HASH} ${XBE_RC})
-    add_dependencies(${target} recompile_${target})
+    if(NOT XBE_USE_GENERATED)
+        add_dependencies(${target} recompile_${target})
+    endif()
     target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${XBE_SDK_DIR}/runtime ${GEN})
     target_include_directories(${target} SYSTEM PRIVATE ${imgui_SOURCE_DIR} ${XBE_SDK_DIR}/third_party/vulkan/include)
     target_compile_options(${target} PRIVATE -fno-strict-aliasing)

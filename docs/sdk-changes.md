@@ -7,6 +7,8 @@ aefcfe2, itself a fork of [XboxXBERecomp](https://github.com/TGP482/XboxXBERecom
 What this port changed:
 
 - `sdk/xdk/4432/layout.toml`: new.
+- `sdk/cmake/XbeRecomp.cmake`: `XBE_USE_GENERATED` builds from the existing `generated/<dir>` with no recompile step and no tool targets, for a
+  cross build to Windows from a Mac. The game's `CMakeLists.txt` and `CMakePresets.json` (`win-x64-mingw`) are at the top of the repository.
 - `sdk/runtime/gpu/state.h`: render state numbers for XDK 4432.
 - `sdk/runtime/kernel/memory.cpp`: macOS shared memory for the physical window, and commits on 16 KB host pages.
 - `sdk/runtime/kernel/threads.cpp`: macOS thread names. Binding to a core does nothing, as macOS has no way to do it.
