@@ -11,11 +11,14 @@
 #
 # The version is the one in src/common/game_info.cpp; the release is v<version>, made from HEAD. In order, stopping at the first failure:
 #   1. preconditions: a clean working tree; HEAD is origin/main (this script never pushes); v<version> is not a tag, here or on origin,
-#      and no release has its name; gh is signed in; LLVM_MINGW (llvm-mingw for this machine) and RECOMPLAUNCHER_GUIDE (RecompLauncher's
-#      developer guide, recomplauncher-agent.md) are set and exist; the notes file exists
+#      and no release has its name; gh is signed in; LLVM_MINGW (llvm-mingw for this machine), MAC_DEPS (the source-built Mac libraries and
+#      compiler, tools/mac/build_libs.sh) and RECOMPLAUNCHER_GUIDE (RecompLauncher's developer guide, recomplauncher-agent.md) are set and
+#      exist; the notes file exists
 #   2. gates, each logged under out/release-<version>/: the Windows build, the first start's tools, tools/check_game_code_dll.sh,
-#      tools/check_config_tool.sh, tools/package_windows.sh (which makes the Windows zip), tools/sim_first_start.sh, the Mac build
-#   3. the Mac zip, git archive of HEAD, and a check that it holds no game data and nothing naming this machine
+#      tools/check_config_tool.sh, tools/package_windows.sh (which makes the Windows zip), tools/sim_first_start.sh, the Mac builds, and
+#      tools/package_mac.sh (which makes the Mac zip: Buffy.app and recomplauncher.json, signed ad hoc) with tools/mac/sim_package_mac.sh
+#   3. the Mac zip is audited again (tools/audit_mac_package.py on its contents extracted): only the allowed files, none made from the game,
+#      nothing naming this machine, the app verifies. The Mac asset is no longer a source archive: GitHub's own "Source code" archives of the tag remain
 #   4. the notes, filled in, in out/release-<version>/notes.md
 #   5. gh release create (the target is HEAD, from git rev-parse)
 #   6. checks after: both assets downloaded back and compared by SHA-256; a published release: the public download URLs answer and
@@ -24,8 +27,9 @@
 # Tests of this script only (each is refused without --dry-run, and none changes what the checks of a real release do):
 #   HELLMOUTH_RELEASE_SKIP_CLEAN_CHECK=1   do not stop for a working tree that is not clean (the files are still listed)
 #   HELLMOUTH_RELEASE_SKIP_TAG_CHECK=1     do not stop for a tag or a release that exists (so that an old version can be played through)
-#   --skip-gates                           skip step 2; the Windows zip of the version must already be in out/
-# Needs: git, gh, curl, python3, zip, unzip, and what the gates need (see tools/package_windows.sh and tools/sim_first_start.sh).
+#   --skip-gates                           skip step 2; the two zips of the version must already be in out/ (and the Mac build in build/app-dylib-deps)
+# Needs: git, gh, curl, python3, zip, unzip, ditto, codesign, and what the gates need (see tools/package_windows.sh, tools/package_mac.sh and
+# tools/sim_first_start.sh).
 set -euo pipefail
 
 DRY=0 PUBLISH=0 SKIP_GATES=0 NOTES_IN=
@@ -50,19 +54,6 @@ parse_args() {
             die "HELLMOUTH_RELEASE_SKIP_TAG_CHECK and HELLMOUTH_RELEASE_SKIP_CLEAN_CHECK only go with --dry-run"
     fi
 }
-
-# The files in a git archive of HEAD that have the extension of a game file but are the repository's own: the screenshots of the
-# README and the icon of Buffy.exe (resources/exe_icon.ico). This is the list of every such file tracked in 0.2.1; a new one fails
-# the release until it is looked at and added here.
-ALLOWED_MAC_FILES=(
-    docs/screenshots/01-main-menu.png
-    docs/screenshots/02-alt-giles-and-buffy.png
-    docs/screenshots/02-giles-cutscene.png
-    docs/screenshots/03-player-takes-over.png
-    resources/exe_icon.ico
-)
-# Extensions of what is made from, or holds, the game: none may be in the Mac zip but the files above.
-GAME_EXTENSIONS='xbe|iso|xiso|dll|map|xpr|mtx|png|ico|icns|wav|xwb|xmv|bik'
 
 # temporary folders, removed when the script ends, however it ends
 TEMPS=()
@@ -117,7 +108,9 @@ check_preconditions() {
     [ -d "$LLVM_MINGW" ] || die "LLVM_MINGW is not a folder: $LLVM_MINGW"
     [ -n "${RECOMPLAUNCHER_GUIDE:-}" ] || die "RECOMPLAUNCHER_GUIDE is not set: RecompLauncher's developer guide (recomplauncher-agent.md)"
     [ -f "$RECOMPLAUNCHER_GUIDE" ] || die "RECOMPLAUNCHER_GUIDE is not a file: $RECOMPLAUNCHER_GUIDE"
-    export LLVM_MINGW RECOMPLAUNCHER_GUIDE
+    [ -n "${MAC_DEPS:-}" ] || die "MAC_DEPS is not set: the source-built Mac libraries and compiler (tools/mac/build_toolchain.sh and build_libs.sh), which the Mac zip is made from"
+    [ -d "$MAC_DEPS/lib" ] || die "MAC_DEPS is not a folder with lib/: $MAC_DEPS"
+    export LLVM_MINGW RECOMPLAUNCHER_GUIDE MAC_DEPS
     [ -f "$NOTES_IN" ] || die "the notes file does not exist: $NOTES_IN"
     echo "OK preconditions: $TAG from ${HEAD_SHA:0:7} (origin/main) in $SLUG"
 }
@@ -127,43 +120,20 @@ run_gates() {
     # the same checks as after any change (tools/gates.sh), plus the Windows zip this release uploads
     bash tools/gates.sh --logs "$L" || die "a gate failed (above); logs in $L"
     [ -f "$WZIP" ] || die "tools/package_windows.sh did not make $WZIP"
+    [ -f "$MZIP" ] || die "tools/package_mac.sh did not make $MZIP"
 }
 
-make_mac_zip() {
-    git archive --format=zip --prefix="Hellmouth-$VERSION/" -o "$MZIP" HEAD
-    local names bad="" f ext allowed
-    names=$(unzip -Z1 "$MZIP")
-    # files with the extension of a game file: only the repository's own, listed at the top of this script
-    while IFS= read -r f; do
-        case $f in */) continue ;; esac
-        ext=${f##*.}; [ "$ext" != "$f" ] || continue
-        if printf '%s' "$ext" | grep -qiE "^($GAME_EXTENSIONS)\$"; then
-            allowed=0
-            for a in "${ALLOWED_MAC_FILES[@]}"; do [ "${f#Hellmouth-$VERSION/}" = "$a" ] && allowed=1; done
-            [ "$allowed" = 1 ] || bad="$bad"$'\n'"    $f"
-        fi
-    done <<< "$names"
-    [ -z "$bad" ] || die "the Mac zip holds files that could be game data:$bad"
-    # the same names as tools/audit_windows_package.py looks for in the Windows release: /Users/<name>/, the home folder and the user
-    # name, and the e-mail's name and the host's name too. Each is looked for in every file of the extracted zip.
-    local tmp patterns=() labels=() v
+# The Mac zip is the one tools/package_mac.sh made (in the gates): its contents are extracted and audited again here, as the file that goes out.
+check_mac_zip() {
+    local tmp B=$REPO/build/app-dylib-deps
+    [ -f "$MZIP" ] || die "$MZIP is missing: tools/package_mac.sh makes it (the gates run it)"
+    [ -f "$B/build/Buffy.dylib" ] && [ -f "$B/game_code/abi_inputs.txt" ] || die "no Mac build in $B to audit against: sdk/host/build.sh -r . -g generated/game -o build/app-dylib-deps -n Buffy --game-code-dylib"
     tmp=$(mktemp -d "${TMPDIR:-/tmp}/hellmouth-mac-zip.XXXXXX"); TEMPS+=("$tmp")
-    unzip -q "$MZIP" -d "$tmp"
-    add() { if [ "${#2}" -ge 4 ]; then labels+=("$1"); patterns+=("$2"); fi; }
-    add "the home folder" "$HOME"
-    add "the user name" "$(id -un)"
-    add "the name part of git's user.email" "$(git config user.email | sed 's/@.*//')"
-    add "the host's name" "$(hostname)"
-    add "the host's short name" "$(hostname -s)"
-    local hits="" i
-    for i in "${!patterns[@]}"; do
-        v=$(grep -rlaF -e "${patterns[$i]}" "$tmp" | sed "s|^$tmp/||" | head -5 || true)
-        [ -z "$v" ] || hits="$hits"$'\n'"    ${labels[$i]}: $(echo "$v" | tr '\n' ' ')"
-    done
-    v=$(grep -rlaE -e '/Users/[A-Za-z0-9._-]+/' -e '[A-Za-z]:\\Users\\' "$tmp" | sed "s|^$tmp/||" | head -5 || true)
-    [ -z "$v" ] || hits="$hits"$'\n'"    a /Users/<name>/ path: $(echo "$v" | tr '\n' ' ')"
-    [ -z "$hits" ] || die "the Mac zip names the machine or the user that made it (files, not the text):$hits"
-    echo "OK mac zip: $(echo "$names" | grep -vc '/$') files, only the repository's own files with a game extension (${#ALLOWED_MAC_FILES[@]}), nothing naming this machine"
+    ditto -x -k --noqtn "$MZIP" "$tmp"
+    python3 -I tools/audit_mac_package.py "$tmp/Hellmouth-$VERSION-macos-arm64" --zip "$MZIP" --dylib "$B/build/Buffy.dylib" --xbe assets/Default.xbe \
+        --generated generated/game --abi-inputs "$B/game_code/abi_inputs.txt" --version "$VERSION" > "$L/audit-mac.log" 2>&1 ||
+        { tail -15 "$L/audit-mac.log" >&2; die "the Mac zip fails its audit (the whole list: $L/audit-mac.log)"; }
+    echo "OK mac zip: $(grep -m1 '^zip:' "$L/audit-mac.log"); $(grep -m1 'total,' "$L/audit-mac.log" | sed 's/^ *[0-9]* *//'); audited (only the allowed files, none made from the game, nothing naming this machine, the app verifies)"
 }
 
 fill_notes() {
@@ -236,10 +206,11 @@ main() {
     if [ "$SKIP_GATES" = 1 ]; then
         echo "note: gates skipped (--skip-gates)"
         [ -f "$WZIP" ] || die "--skip-gates needs $WZIP, made by tools/package_windows.sh"
+        [ -f "$MZIP" ] || die "--skip-gates needs $MZIP, made by tools/package_mac.sh"
     else
         run_gates "$L"
     fi
-    make_mac_zip
+    check_mac_zip
     fill_notes
     local cmd=(gh release create "$TAG" --target "$(git rev-parse HEAD)" --title "$TITLE" --notes-file "$NOTES")
     if [ "$PUBLISH" = 1 ]; then cmd+=(--latest); else cmd+=(--draft); fi

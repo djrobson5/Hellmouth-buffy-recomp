@@ -8,7 +8,7 @@
 #   --windows        only the Windows checks       --mac   only the Mac checks       (default: both)
 #
 # Needs: LLVM_MINGW (llvm-mingw for this Mac) and RECOMPLAUNCHER_GUIDE (RecompLauncher's developer guide, for the check of
-# recomplauncher.json). With MAC_DEPS (tools/mac/build_libs.sh's output) the Mac checks also build and check the game-code-dylib app
+# recomplauncher.json; the Mac packaging needs it too). With MAC_DEPS (tools/mac/build_libs.sh's output) the Mac checks also build and check the game-code-dylib app
 # against the source-built libraries; without it that part is skipped and says so.
 #
 # Windows: the exe and the game code DLL, the tools, check_game_code_dll.sh, check_config_tool.sh, package_windows.sh (with the
@@ -17,7 +17,8 @@
 # the game-code-dylib build with llvm-mingw (build/app-dylib), check_game_code_dylib.sh and
 # tools/mac/sim_first_start_mac.sh (the Mac first start, without a window, from the disc) and keeper_check.sh over the built program, and with MAC_DEPS the same build against the
 # source-built libraries (build/app-dylib-deps), check_game_code_dylib.sh, the first start again, Buffy --check-game-code (loads the game
-# code without a window) and tools/mac/check_mac_deps.sh.
+# code without a window), tools/mac/check_mac_deps.sh, tools/package_mac.sh (Buffy.app and the zip, with the recomplauncher.json check and the
+# audit of the folder and of the zip's contents) and tools/mac/sim_package_mac.sh (the zip extracted and played, also with a quarantine attribute).
 set -uo pipefail
 
 LOGS= WIN=1 MAC=1
@@ -39,7 +40,7 @@ LOGS=$(cd "$LOGS" && pwd -P)
 
 die() { echo "gates: $*" >&2; exit 1; }
 [ -n "${LLVM_MINGW:-}" ] && [ -d "$LLVM_MINGW" ] || die "LLVM_MINGW is not set to a folder: llvm-mingw for this Mac"
-if [ "$WIN" = 1 ]; then
+if [ "$WIN" = 1 ] || { [ "$MAC" = 1 ] && [ -n "${MAC_DEPS:-}" ]; }; then
     [ -n "${RECOMPLAUNCHER_GUIDE:-}" ] && [ -f "$RECOMPLAUNCHER_GUIDE" ] || die "RECOMPLAUNCHER_GUIDE is not set to a file: RecompLauncher's developer guide"
 fi
 export LLVM_MINGW RECOMPLAUNCHER_GUIDE
@@ -114,6 +115,14 @@ if [ "$MAC" = 1 ]; then
         bash tools/mac/check_mac_deps.sh build/app-dylib-deps > "$LOGS/check-mac-deps.log" 2>&1 || rc=$?
         [ "$rc" = 0 ] && grep -q '^ALL PASSED' "$LOGS/check-mac-deps.log" || fail "mac deps" "$LOGS/check-mac-deps.log" "exit status $rc"
         echo "mac deps: $(grep -c '^PASS' "$LOGS/check-mac-deps.log") PASS, ALL PASSED"
+        rc=0
+        bash tools/package_mac.sh > "$LOGS/package-mac.log" 2>&1 || rc=$?
+        rl=$(grep -c 'RECOMPLAUNCHER.JSON PASSED' "$LOGS/package-mac.log" || true)
+        au=$(grep -c 'AUDIT PASSED' "$LOGS/package-mac.log" || true)
+        echo "mac package: $rl RECOMPLAUNCHER.JSON PASSED, $au AUDIT PASSED"
+        [ "$rc" = 0 ] && [ "$rl" = 1 ] && [ "$au" = 2 ] && ! grep -qi 'not checked' "$LOGS/package-mac.log" && ! grep -q 'AUDIT FAILED' "$LOGS/package-mac.log" ||
+            fail "mac package" "$LOGS/package-mac.log" "exit status $rc; needs RECOMPLAUNCHER.JSON PASSED, 2 AUDIT PASSED (the folder and the zip's contents) and no \"not checked\""
+        counted "mac package (zip)" "$LOGS/sim-package-mac.log" 'bash tools/mac/sim_package_mac.sh'
     else
         echo "skipped: the build against the source-built libraries (set MAC_DEPS to the output of tools/mac/build_libs.sh)"
     fi

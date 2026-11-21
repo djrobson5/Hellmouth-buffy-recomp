@@ -8,9 +8,8 @@ a Mac program, and the Xbox kernel and libraries are implemented on the Mac. It 
 
 <a href="https://recomplauncher.com/game/hellmouth-buffy-recomp"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
 
-> **No game files are included,** and no code generated from them. The installer builds the app on your Mac from your own
-> copy of the disc. A built copy contains the recompiled game, so there's no ready-made app to download, and please don't
-> share one. Hellmouth is an unofficial fan
+> **No game files are included,** and no code generated from them. The app builds the game on your Mac from your own
+> copy of the disc, the first time it starts. What it builds contains the recompiled game, so please don't share it. Hellmouth is an unofficial fan
 > project, and isn't affiliated with or endorsed by the owners of *Buffy the Vampire Slayer*, The Collective, Fox Interactive,
 > Electronic Arts, Microsoft or Apple. Please report problems [here](https://github.com/djrobson5/Hellmouth-buffy-recomp/issues), not to the
 > projects credited below.
@@ -52,26 +51,34 @@ game. The game's Brightness slider (Options, Display) lifts it.
 
 ## What you need
 
-- An Apple Silicon Mac, with the Xcode Command Line Tools (`xcode-select --install`) and [Homebrew](https://brew.sh).
+- An Apple Silicon Mac (M1 or later) with macOS 13 (Ventura) or later. Nothing else needs installing: the app holds its own compiler.
+  (Building it by hand, below, needs the Xcode Command Line Tools and Homebrew.)
 - A disc image (`.iso`) of the **USA Xbox release**, or the game partition alone. To check it, `tools/regen.sh` extracts
   `assets/Default.xbe`, whose SHA-1 should be `2583fb651fafc10d47e34daae91fab9a8b9e1494`. Whole-disc images hash differently
   from each other, so that file is the one to compare. The port hooks exact addresses in this build, so other releases aren't
   expected to work; `--any-release` lets one start if you want to try.
-- About 450 MB of disk for the build, which took about a minute on an M5 Pro, plus the game's own install on first start.
+- About 500 MB of free disk while the game is built from the disc at the first start (15 seconds on an 18 core M5 Pro; longer on a
+  smaller Mac), and no network.
 
 ## Installing it
 
-1. Download `Hellmouth-<version>-macos-arm64.zip` from [Releases](https://github.com/djrobson5/Hellmouth-buffy-recomp/releases/latest) and unzip it. It unzips to a folder named `Hellmouth-<version>`.
-2. In Terminal, run the installer, with the path to your disc image (you can drag each file into the Terminal window):
+1. Download `Hellmouth-<version>-macos-arm64.zip` from [Releases](https://github.com/djrobson5/Hellmouth-buffy-recomp/releases/latest)
+   and unzip it. It unzips to a folder named `Hellmouth-<version>-macos-arm64` holding `Buffy.app` and a `README.txt`.
+2. Drag `Buffy.app` to your Applications folder and open it. macOS may say it can't check the app for malware, because the app is
+   signed ad hoc and not by an Apple developer account: choose Open Anyway in System Settings, Privacy & Security (macOS 15 and later),
+   or Control-click the app and choose Open (macOS 13 and 14). You do this once.
+3. Choose your disc image when it asks. The first start builds the game from it (a minute or so, once), then the game starts.
 
-   ```sh
-   bash ~/Downloads/Hellmouth-<version>/install.sh "<path to image.iso>"
-   ```
+`README.txt` in the folder has the rest: where saves are kept, how to carry saves over from the old installed app, and what to do if
+something goes wrong. Your saves, settings and logs are in `~/Library/Application Support/Buffy`, outside the app.
 
-The installer checks your Mac and your disc, offers to install any Homebrew packages that are missing, recompiles the game and
-builds the app, then puts it in `/Applications` as `Buffy.app`. Open it and choose your disc image when it asks. The first build
-needs a network connection. Installing again leaves your saves and settings alone.
+**With RecompLauncher.** Instead of these steps, install Hellmouth from [RecompLauncher](https://recomplauncher.com) (the badge above):
+it asks for your disc image, builds the game from it and starts it, and keeps it up to date, and macOS asks nothing about the app. It keeps
+the saves (`hdd/E`), `achievements.txt`, `settings.toml`, `logs/` and the built game in a folder named `recompdata` inside the game's
+folder, and an update leaves that folder alone.
 
+**`install.sh` is retired.** The old installer (Homebrew, a build in `/Applications`) is replaced by the zip above. The file is still in
+the repository for now, untouched; it is not part of a release, and it will be removed.
 
 ## Installing it on Windows
 
@@ -197,8 +204,7 @@ How the two parts meet, in the order a call takes:
 ### The game's code as a dylib on the Mac (development)
 
 The Mac app can keep the recompiled game out of the executable, as the Windows build does, so that a Mac release can carry none of it and
-build it from the player's disc at its first start. This is the foundation for that (the executable, the loader and the build of the
-dylib; the first start's window, packaging and `--prepare` for the Mac are not made yet). The default build above is unchanged.
+build it from the player's disc at its first start. This is how the Mac release is made (below). The default build above is unchanged.
 
 ```sh
 export LLVM_MINGW=<folder of llvm-mingw, built from source: its lld has the Mach-O port>
@@ -233,10 +239,28 @@ tools/mac/check_mac_deps.sh                              # the same for the outp
 ```
 
 With `MAC_DEPS` set, `build.sh` builds against that folder (no `brew`, no `pkg-config`), for macOS 13.0, and copies `libSDL3.0.dylib` and
-`libMoltenVK.dylib` to `<out>/Frameworks`, where the executable's `@executable_path/Frameworks` search path finds them; glslang and
+`libMoltenVK.dylib` to `<out>/Frameworks`, where the executable's `@executable_path/Frameworks` search path finds them (and `@executable_path/../Frameworks`, which is where they are in the app); glslang and
 SPIRV-Tools are linked into it. With `--game-code-dylib`, `compiler/clang` and `compiler/ld64.lld` are copies of the built programs, not
 scripts, and `$LLVM_MINGW` is not needed to build. Without `MAC_DEPS` nothing changes: the build is the one with Homebrew's libraries.
 `install.sh` and `bundle.sh` still use that build.
+
+#### The Mac release
+
+```sh
+export MAC_DEPS=~/Projects/toolchains/mac-deps RECOMPLAUNCHER_GUIDE=<recomplauncher-agent.md>
+sdk/host/build.sh -r . -g generated/game -o build/app-dylib-deps -n Buffy --game-code-dylib
+tools/package_mac.sh               # out/Hellmouth-<version>-macos-arm64/ and .zip: Buffy.app, recomplauncher.json, README.txt; audited
+tools/mac/sim_package_mac.sh       # the zip extracted into a folder with a space and an accent, and played with no window
+```
+
+`tools/package_mac.sh` puts the executable, the two libraries (`Contents/Frameworks`), the compiler (`Contents/Resources/compiler`: the first
+start looks for it there, `app::AppFolder`), the licences of everything in it (`Contents/Resources/licenses`), the settings list a launcher
+can show (`settings.json`, from `--describe-settings`) and a plain icon of its own (`tools/make_app_icon.py`, the Windows exe's "H"; the
+game's own icon is made from the player's disc and set at run time) into `Buffy.app`, signs it ad hoc (inner code first, no hardened runtime), and zips it with
+`ditto`. `tools/audit_mac_package.py` then checks the folder and the zip's contents: only the allowed files, nothing made from the game, nothing
+that names the build machine (the build uses `-ffile-prefix-map` and `-Wl,-S`), arm64 and macOS 13.0 everywhere, the signature. The Mac's
+`recomplauncher.json` is `tools/recomplauncher-mac.json.in`, checked by `tools/check_recomplauncher.py` against RecompLauncher's schema and the
+program's own `--describe-settings`. `docs/releasing.md` has the release steps.
 
 ### The Windows release
 
@@ -499,9 +523,9 @@ other settings, including pad scripts.
 | `sdk/host/` | The macOS program: window, events and sound |
 | `sdk/xdk/4432/layout.toml` | This XDK's data layouts, each value with the instruction that proves it |
 | `src/` | The game's side of the port: the achievement list, the hooks, widescreen, the Extras additions |
-| `install.sh` | The installer: the steps under "Building it by hand", with checks |
+| `install.sh` | The old installer (Homebrew), retired: the Mac release is a zip with `Buffy.app` |
 | `resources/` | `exe_icon.ico`: `Buffy.exe`'s own icon, drawn by `tools/make_exe_icon.py` |
-| `tools/` | `regen.sh`; `make_config.py` writes the recompiler's input, and `buffy_config/` (C++) does the same for the Windows first start, checked against it by `check_config_tool.sh`, and also makes the achievement pictures and the icon from the disc (`--pictures`; `make_achievement_icons.py` and `make_icon.py` are the Mac's, and `compare_pngs.py` and `check_ico.py` check the C++ against them); `disasm.py` disassembles by name; `coverage.py` reports what the game calls in the libraries; `check_game_code_dll.sh` (with `library_calls.cpp`) and `sim_first_start.sh` (with `first_start_check.cpp`) check the Windows build, and `check_game_code_dylib.sh` the Mac build with the game's code in a dylib, `gates.sh` runs all of these checks in one go after a change (and `release.sh` runs it before a release), and `package_windows.sh` (with `audit_windows_package.py` and `windows_player_readme.txt`) assembles and audits its release (see "Cross-building for Windows" and "The Windows release") |
+| `tools/` | `regen.sh`; `make_config.py` writes the recompiler's input, and `buffy_config/` (C++) does the same for the Windows first start, checked against it by `check_config_tool.sh`, and also makes the achievement pictures and the icon from the disc (`--pictures`; `make_achievement_icons.py` and `make_icon.py` are the Mac's, and `compare_pngs.py` and `check_ico.py` check the C++ against them); `disasm.py` disassembles by name; `coverage.py` reports what the game calls in the libraries; `check_game_code_dll.sh` (with `library_calls.cpp`) and `sim_first_start.sh` (with `first_start_check.cpp`) check the Windows build, and `check_game_code_dylib.sh` the Mac build with the game's code in a dylib, `gates.sh` runs all of these checks in one go after a change (and `release.sh` runs it before a release), and `package_windows.sh` (with `audit_windows_package.py` and `windows_player_readme.txt`) assembles and audits its release (see "Cross-building for Windows" and "The Windows release"); `package_mac.sh` (with `audit_mac_package.py`, `mac_player_readme.txt`, `make_app_icon.py`, `recomplauncher-mac.json.in` and `mac/sim_package_mac.sh`) does the same for the Mac release (see "The Mac release") |
 | `docs/xdk-4432.md` | How this game differs from what the SDK expected, and the evidence |
 | `assets/`, `config/game.toml`, `generated/`, `build/` | Not in the repository: the game's files, what's derived from them, and build output |
 
