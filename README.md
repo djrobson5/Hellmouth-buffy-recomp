@@ -218,6 +218,26 @@ replacements the built executable defines). A replacement's name stays undefined
 loaded; the executable's own calls into the dylib (`X86_EXTERN_FUNC`) go through slots that `dispatch::Load` fills with `dlsym`. The ABI
 token is the Windows one's logic (`sdk/cmake/XbeAbi.cmake`), run as `cmake -P sdk/cmake/xbe_abi.cmake` by `build.sh`.
 
+#### No Homebrew: the compiler and the libraries from source (`MAC_DEPS`)
+
+What a Mac release ships, the player's compiler and the libraries the app runs on, is built from source for macOS 13 (Ventura) and later
+(arm64), with nothing from Homebrew, by two scripts in `tools/mac/`. They pin each version and commit, are re-run safely (what is built
+is skipped), and leave the licences in the output folder (default `~/Projects/toolchains/mac-deps`, outside the repository):
+
+```sh
+tools/mac/build_toolchain.sh            # clang + ld64.lld (LLVM 23.1.5, static, no zlib or zstd): bin/clang, bin/ld64.lld
+tools/mac/build_libs.sh                 # SDL3, MoltenVK (dylibs), glslang + SPIRV-Tools (static), the Vulkan and SPIR-V headers
+MAC_DEPS=~/Projects/toolchains/mac-deps sdk/host/build.sh -r . -g generated/game -o build/app-dylib-deps -n Buffy --game-code-dylib
+tools/mac/check_mac_deps.sh build/app-dylib-deps         # minos 13.0, only system libraries and @ names, signed, licences present
+tools/mac/check_mac_deps.sh                              # the same for the output folder itself
+```
+
+With `MAC_DEPS` set, `build.sh` builds against that folder (no `brew`, no `pkg-config`), for macOS 13.0, and copies `libSDL3.0.dylib` and
+`libMoltenVK.dylib` to `<out>/Frameworks`, where the executable's `@executable_path/Frameworks` search path finds them; glslang and
+SPIRV-Tools are linked into it. With `--game-code-dylib`, `compiler/clang` and `compiler/ld64.lld` are copies of the built programs, not
+scripts, and `$LLVM_MINGW` is not needed to build. Without `MAC_DEPS` nothing changes: the build is the one with Homebrew's libraries.
+`install.sh` and `bundle.sh` still use that build.
+
 ### The Windows release
 
 What the Windows program does when it starts, and where it keeps things. (Tested on one PC: see "Status".)

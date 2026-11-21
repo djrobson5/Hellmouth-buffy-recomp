@@ -5,6 +5,11 @@
 #   -n exe name (the game restarts itself by this name)   -G folder for the generated objects, shared with other builds
 # The harness's build is used, without its stand ins for the window, controllers and sound; its reference renderer stays
 # as the picture when Vulkan can't start.
+#   MAC_DEPS=<folder>   (environment) the libraries and the compiler built from source by tools/mac/build_toolchain.sh and build_libs.sh,
+#                       instead of Homebrew's: macOS 13.0 and later, nothing from Homebrew, SDL3 and MoltenVK as dylibs copied to
+#                       <out>/Frameworks (the executable finds them there), glslang and SPIRV-Tools linked in. With --game-code-dylib, the
+#                       compiler/ folder gets that clang and ld64.lld (real files), not scripts that run $LLVM_MINGW. Unset, the build is
+#                       the one with Homebrew's libraries, as always. tools/mac/check_mac_deps.sh checks the result.
 #   --game-code-dylib   (anywhere on the line) the executable without the game's code: it loads <out>/build/<name>.dylib (or --game-code)
 #                       as the Windows build loads Buffy.dll. Builds, in <out>: the executable; game_code/ (the ABI token and flags,
 #                       sdk/cmake/xbe_abi.cmake); compiler/ (what the first start compiles with: clang and ld64.lld from
@@ -17,10 +22,10 @@ for a in "$@"; do shift; if [ "$a" = --game-code-dylib ]; then DYLIB=1; else set
 while getopts r:g:o:n:G: opt; do
     case $opt in
         r) REPO=$OPTARG ;; g) GEN=$OPTARG ;; o) OUT=$OPTARG ;; n) NAME=$OPTARG ;; G) GEN_OBJ=$OPTARG ;;
-        *) sed -n 2,7p "$0"; exit 2 ;;
+        *) sed -n 2,13p "$0"; exit 2 ;;
     esac
 done
-[ -n "$REPO" ] && [ -n "$GEN" ] && [ -n "$OUT" ] && [ -n "$NAME" ] || { sed -n 2,7p "$0"; exit 2; }
+[ -n "$REPO" ] && [ -n "$GEN" ] && [ -n "$OUT" ] && [ -n "$NAME" ] || { sed -n 2,13p "$0"; exit 2; }
 HERE=$(dirname "$(realpath "$0")"); RT=$HERE/../runtime
 mkdir -p "$OUT"
 # the xbe's SHA-1: the executable checks the game it finds is the release it was made from (as XbeRecomp.cmake)
@@ -28,7 +33,14 @@ sha=$(shasum -a 1 "$REPO"/assets/[Dd]efault.xbe | head -1 | cut -d' ' -f1)
 hash=$OUT/xbe_hash.cpp
 want="extern const char kImageSha1[] = \"$sha\";"
 [ "$(cat "$hash" 2>/dev/null)" = "$want" ] || echo "$want" > "$hash"
-BREW=$(brew --prefix)
+MAC_DEPS=${MAC_DEPS:-}
+if [ -n "$MAC_DEPS" ]; then
+    [ -d "$MAC_DEPS/lib" ] || { echo "MAC_DEPS=$MAC_DEPS: no lib folder (tools/mac/build_libs.sh makes it)" >&2; exit 1; }
+    MAC_DEPS=$(cd "$MAC_DEPS" && pwd -P)
+    case $MAC_DEPS in *[[:space:]]*) echo "MAC_DEPS=$MAC_DEPS: the compiler flags take no spaces in the path" >&2; exit 1 ;; esac
+else
+    BREW=$(brew --prefix)
+fi
 # the Dock's icon for this build (tools/make_icon.py), which has no app around it
 if [ -f "$REPO/assets/$NAME.png" ]; then cp "$REPO/assets/$NAME.png" "$OUT/icon.png"; fi
 # the achievement icons, if the game has any (a game's tools make them), which bundle.sh puts in the app
@@ -48,8 +60,22 @@ if [ -n "$DYLIB" ]; then
     HOST_EXTRA=" -DXBE_GAME_CODE_DLL -fvisibility=hidden -I$(realpath "$CODE")"
     LINK_EXTRA=" -Wl,-export_dynamic"
 fi
-export HOST_OPT=-O2 HOST_FLAGS="$(pkg-config --cflags sdl3) -I$HERE -I$BREW/include -I$BREW/include/glslang -I$IMGUI -DXBE_HOST_VULKAN -DIMGUI_IMPL_VULKAN_NO_PROTOTYPES$HOST_EXTRA"
-export LINK_FLAGS="$(pkg-config --libs sdl3) -L$BREW/lib -Wl,-rpath,$BREW/lib -Wl,-headerpad_max_install_names -framework AppKit -framework QuartzCore -framework CoreGraphics -framework Foundation -lglslang -lSPIRV -lglslang-default-resource-limits$LINK_EXTRA"
+if [ -n "$MAC_DEPS" ]; then
+    # the libraries of tools/mac/build_libs.sh, for macOS 13.0 and later; no brew, no pkg-config. SDL3 and MoltenVK (opened by name when the
+    # renderer starts) are copied next to the executable, where its search path points; glslang and SPIRV-Tools are linked in.
+    for f in lib/libSDL3.0.dylib lib/libMoltenVK.dylib lib/libglslang.a lib/libSPIRV.a lib/libglslang-default-resource-limits.a lib/libSPIRV-Tools-opt.a \
+             lib/libSPIRV-Tools.a include/SDL3/SDL.h include/vulkan/vulkan.h include/glslang/Public/ShaderLang.h; do
+        [ -e "$MAC_DEPS/$f" ] || { echo "MAC_DEPS=$MAC_DEPS has no $f (tools/mac/build_libs.sh makes it)" >&2; exit 1; }
+    done
+    export MACOSX_DEPLOYMENT_TARGET=13.0
+    mkdir -p "$OUT/Frameworks"
+    for l in libSDL3.0.dylib libMoltenVK.dylib; do cmp -s "$MAC_DEPS/lib/$l" "$OUT/Frameworks/$l" || { cp -fL "$MAC_DEPS/lib/$l" "$OUT/Frameworks/$l"; chmod u+w "$OUT/Frameworks/$l"; }; done
+    export HOST_OPT=-O2 HOST_FLAGS="-mmacosx-version-min=13.0 -I$MAC_DEPS/include -I$HERE -I$MAC_DEPS/include/glslang -I$IMGUI -DXBE_HOST_VULKAN -DIMGUI_IMPL_VULKAN_NO_PROTOTYPES$HOST_EXTRA"
+    export LINK_FLAGS="-mmacosx-version-min=13.0 -L$MAC_DEPS/lib -lSDL3 -Wl,-rpath,@executable_path/Frameworks -Wl,-headerpad_max_install_names -framework AppKit -framework QuartzCore -framework CoreGraphics -framework Foundation -lglslang -lSPIRV -lglslang-default-resource-limits -lSPIRV-Tools-opt -lSPIRV-Tools$LINK_EXTRA"
+else
+    export HOST_OPT=-O2 HOST_FLAGS="$(pkg-config --cflags sdl3) -I$HERE -I$BREW/include -I$BREW/include/glslang -I$IMGUI -DXBE_HOST_VULKAN -DIMGUI_IMPL_VULKAN_NO_PROTOTYPES$HOST_EXTRA"
+    export LINK_FLAGS="$(pkg-config --libs sdl3) -L$BREW/lib -Wl,-rpath,$BREW/lib -Wl,-headerpad_max_install_names -framework AppKit -framework QuartzCore -framework CoreGraphics -framework Foundation -lglslang -lSPIRV -lglslang-default-resource-limits$LINK_EXTRA"
+fi
 ARGS=(-r "$REPO" -g "$GEN" -o "$OUT" -n "$NAME" ${GEN_OBJ:+-G "$GEN_OBJ"}
     -x '/harness/(app_headless|main_test|pad_script|null_audio)\.cpp'
     -e "$HERE/main.cpp" -e "$HERE/preview.cpp" -e "$HERE/script_pad.cpp" -e "$HERE/audio_sdl.cpp" -e "$HERE/fps_overlay.mm" -e "$HERE/window_mac.mm" -e "$HERE/ui_events.cpp"
