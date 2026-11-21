@@ -1,6 +1,9 @@
 # Hellmouth: Buffy the Vampire Slayer (original Xbox), statically recompiled
 
 cmake_minimum_required(VERSION 3.25)
+# the cross build's module scan fails harmlessly on SDL's files ("unsupported argument 'x86-64-v2' to option '-march='")
+# and nothing here uses modules
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 project(Buffy LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)

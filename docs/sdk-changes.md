@@ -9,6 +9,33 @@ What this port changed:
 - `sdk/xdk/4432/layout.toml`: new.
 - `sdk/cmake/XbeRecomp.cmake`: `XBE_USE_GENERATED` builds from the existing `generated/<dir>` with no recompile step and no tool targets, for a
   cross build to Windows from a Mac. The game's `CMakeLists.txt` and `CMakePresets.json` (`win-x64-mingw`) are at the top of the repository.
+- The recompiled code in a DLL, for the Windows build, from [XboxXBERecomp](https://github.com/TGP482/XboxXBERecomp) commit 42563979
+  ("Game code builds into a DLL the first start compiles", with 90bccea3), changed to build for the mingw ABI with llvm-mingw
+  rather than MSVC's. The executable holds none of the game's code, so it can be shared, and the DLL is compiled from the
+  player's own xbe. What changed here:
+  - `sdk/runtime/cpu/x86_ops.h`: `X86_GAME_CODE` (the DLL's compile) and `XBE_GAME_CODE_DLL` (the executable it belongs to) make
+    `X86_HOST_API` and `X86_FUNC` import and export, and `X86_WEAK_FUNC` an `/alternatename` in the DLL. `X86_CATCH_RESUME` is the
+    catch that generated functions end with: by type as before (the same machine code on macOS), and in the DLL a `catch (...)`
+    that asks `x86_try_resume`. `X86_TRACED_FUNC` makes a plain function and a weak alias of it.
+  - `sdk/runtime/cpu/dispatch.cpp`: `dispatch::Load` (the DLL's tables, by name), `EntryPoint` and `InCode` for the callers that read
+    `X86CodeBase`, `X86CodeEnd` and `X86EntryPoint` (`kernel/boot.cpp`, `xdk/d3d8.cpp`), and `x86_try_resume`, with the resume that
+    `x86_icall` threw kept per thread. The exception that reaches it must be an `X86Resume`, so another one passing through the
+    DLL's frames is rethrown. `x86_context.h` declares the tables `extern "C"`.
+  - `sdk/runtime/cpu/libc_exports.cpp`, `host_exports.def.in`: the executable's exports that are not its own API: the C++ exception
+    runtime and wrappers for the C library calls the DLL leaves undefined (an upstream list adapted to what this code calls).
+  - `sdk/runtime/cpu/freestanding/`: stand-ins for `<cstdint>`, `<cstring>`, `<cmath>`, `<limits>` and `<type_traits>`, for the
+    compile without a C++ library.
+  - `sdk/runtime/app/game_code.cpp`, `app.h`, `main.cpp`: `PrepareGameCode` loads `IMAGE_LIBRARY` from beside the executable and ends
+    the run with `kExitNoGameCode` when it is missing. Compiling it on the first start is not here yet. `Sha1` is public.
+  - `sdk/tools/recomp`: `[xbe] library` is required, and the recompiler writes `exports.def` (what the DLL exports: its tables and one
+    `__imp__sub_XXXXXXXX` name for each function) and `imports.def` (the same, with `sub_XXXXXXXX` aliases, for the executable's
+    import library). `IMAGE_LIBRARY` and `IMAGE_SECTIONS_HASH` are in `image_symbols.h`, so the executable has them without the DLL: the
+    hash used to come from the generated `x86_func_mapping.cpp`, which the DLL now holds. Hooks are declared `X86_HOST_API` (no
+    separate export header: the declaration exports them under mingw). `sdk/tools/symbols` takes `--library`, as do the templates.
+  - `sdk/tools/LLVM-LICENSE.txt`: the licence text for the clang and lld the first start runs.
+  - `sdk/cmake/XbeRecomp.cmake`: `XBE_GAME_CODE_DLL` leaves the generated sources out of the executable, gives it the import library, the
+    delay loading and the module definition file, and adds the `game_code_dll` target, which builds the DLL with the first start's
+    commands for checking. The flags are in one place, written to `game_code_flags.h` for the executable.
 - `sdk/runtime/gpu/state.h`: render state numbers for XDK 4432.
 - `sdk/runtime/kernel/memory.cpp`: macOS shared memory for the physical window, and commits on 16 KB host pages.
 - `sdk/runtime/kernel/threads.cpp`: macOS thread names. Binding to a core does nothing, as macOS has no way to do it.

@@ -154,6 +154,7 @@ enum ExitCode : int {
     kExitNoD3D12 = 4,       // the graphics card or driver cannot run the renderer
     kExitBadSettings = 5,   // the settings file is not readable
     kExitGpuLost = 6,       // the graphics driver stopped or reset while playing (Windows' GPU timeout, a driver crash)
+    kExitNoGameCode = 7,    // the recompiled game code (the DLL beside the executable) is missing or will not load
 };
 // logs the reason, shows it unless --no-dialogs, and ends the process with code
 [[noreturn]] void Fail(int code, const std::wstring& message);
@@ -194,6 +195,11 @@ struct GameFiles {
     std::vector<uint8_t> xbe;
 };
 bool FindGame(GameFiles& game);
+std::string Sha1(const std::vector<uint8_t>& data);  // lower case hex
+// the recompiled code, when the executable carries none (XBE_GAME_CODE_DLL): the DLL beside it (IMAGE_LIBRARY), loaded
+// by its full path before the first call into it; false after telling the player why the game cannot start. For now the
+// DLL must be there already; building it on the first start comes next (game_code.cpp)
+bool PrepareGameCode(const GameFiles& game);
 int Instance();  // Args().instance
 void* Window();  // HWND
 void* MetalLayer();  // not Windows: the window's CAMetalLayer, null when the window has none (the renderer draws into it)

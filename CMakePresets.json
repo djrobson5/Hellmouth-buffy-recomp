@@ -31,7 +31,8 @@
                 "CMAKE_BUILD_TYPE": "Release",
                 "CMAKE_C_FLAGS": "-march=x86-64-v2",
                 "CMAKE_CXX_FLAGS": "-march=x86-64-v2",
-                "XBE_USE_GENERATED": "ON"
+                "XBE_USE_GENERATED": "ON",
+                "XBE_GAME_CODE_DLL": "ON"
             },
             "condition": {"type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Windows"}
         }

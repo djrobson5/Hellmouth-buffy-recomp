@@ -52,20 +52,6 @@ fs::path FindAssets() {
     return {};
 }
 
-std::string Sha1(const std::vector<uint8_t>& data) {
-    alignas(8) uint8_t ctx[128];
-    uint8_t digest[20];
-    crypto::ShaInit(ctx);
-    crypto::ShaUpdate(ctx, data.data(), data.size());
-    crypto::ShaFinal(ctx, digest);
-    std::string hex;
-    for (uint8_t b : digest) {
-        hex += "0123456789abcdef"[b >> 4];
-        hex += "0123456789abcdef"[b & 15];
-    }
-    return hex;
-}
-
 bool ReadHostFile(const fs::path& path, std::vector<uint8_t>& out) {
     std::ifstream f(path, std::ios::binary);
     if (!f) return false;
@@ -105,6 +91,20 @@ std::string Edition(const std::vector<uint8_t>& x) {
 std::wstring Wide(const std::string& s) { return std::wstring(s.begin(), s.end()); }
 
 }  // namespace
+
+std::string Sha1(const std::vector<uint8_t>& data) {
+    alignas(8) uint8_t ctx[128];
+    uint8_t digest[20];
+    crypto::ShaInit(ctx);
+    crypto::ShaUpdate(ctx, data.data(), data.size());
+    crypto::ShaFinal(ctx, digest);
+    std::string hex;
+    for (uint8_t b : digest) {
+        hex += "0123456789abcdef"[b >> 4];
+        hex += "0123456789abcdef"[b & 15];
+    }
+    return hex;
+}
 
 // the game where --game says (a folder with the xbe, or a disc image), else in assets
 bool FindGame(GameFiles& game) {

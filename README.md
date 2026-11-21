@@ -97,18 +97,40 @@ and the restart looks for that name beside the running executable. The window cl
 ### Cross-building for Windows
 
 A compile check, not a release: it builds the Windows program on a Mac with [llvm-mingw](https://github.com/mstorsjo/llvm-mingw),
-using the `generated/game` that `tools/regen.sh` made, and the result has never been run. It holds code made from the game,
-so it must not be shared.
+using the `generated/game` that `tools/regen.sh` made, and the result has never been run. The program is in two parts. `Buffy.exe`
+holds the runtime and this port's own code and none of the game's recompiled code. `Buffy.dll` holds the recompiled game: the plan is
+for the executable to compile it on the player's PC at the first start, from their own copy of the game. That step isn't written
+yet, so for now the DLL is built here, with the commands the player's PC will run, and neither file may be shared.
 
 ```sh
 export LLVM_MINGW=<folder of llvm-mingw>
 cmake --preset win-x64-mingw
-cmake --build out/build/win-x64-mingw
+cmake --build out/build/win-x64-mingw                    # Buffy.exe
+cmake --build out/build/win-x64-mingw --target game_code_dll   # game_code/Buffy.dll, beside the exe's import library
+tools/check_game_code_dll.sh                             # the exe and the DLL link with nothing undefined, and agree
+tools/sim_first_start.sh                                 # the first start's commands, in a folder with a space and an accent
 ```
 
 `XBE_USE_GENERATED` (set by the preset) builds from `generated/game` as it is, rather than running the recompiler, which would
-be a Windows program that can't run here. On Windows, the `release` preset (Clang and Ninja) recompiles as `sdk/README.md`
-describes. Both builds pass `XBE_RENDER_THREAD=0` and `XBE_RAW_VERTICES=0`, as the Mac build does.
+be a Windows program that can't run here. `XBE_GAME_CODE_DLL` (also set by it) builds the game's code as `Buffy.dll` and leaves
+it out of the executable; with it off, the code is linked into the executable as on the Mac. On Windows, the `release` preset
+(Clang and Ninja) recompiles as `sdk/README.md` describes, with the code in the executable. All of these builds pass
+`XBE_RENDER_THREAD=0` and `XBE_RAW_VERTICES=0`, as the Mac build does.
+
+How the two parts meet, in the order a call takes:
+
+- The DLL is compiled as C++ for the mingw target without a C or C++ library (`-nostdinc`, `-nostdinc++`, no default libraries,
+  no entry point), against the few stand-in headers in `sdk/runtime/cpu/freestanding`. It links against `Buffy.lib`, the
+  executable's import library, and calls what the executable exports: the runtime (`x86_icall`, `x86_kernel`, ...), the functions
+  of this port that replace recompiled ones (`X86_FUNC` in `src/game` and `sdk/runtime`), the C++ exception runtime and the C
+  library's memory and math calls (`sdk/runtime/cpu/host_exports.def.in`). A recompiled function with no replacement stays in the
+  DLL: `X86_WEAK_FUNC` is an `/alternatename` there, so the linker takes the executable's function when it exports one by that
+  name and the DLL's own when it does not.
+- The executable calls into the DLL through `imports.def` (written by the recompiler beside the code), an import library of
+  `__imp__sub_XXXXXXXX` names and `sub_XXXXXXXX` aliases for them, delay loaded: `PrepareGameCode` loads `Buffy.dll` from beside
+  the executable by its full path before the first call, and finds the tables (`X86FuncMappings` and the rest) with `GetProcAddress`.
+- A C++ exception thrown in the executable unwinds through the DLL's frames: the DLL catches with `catch (...)` and asks the
+  executable (`x86_try_resume`) whether it was a resume for that frame, as it can't name the executable's exception type.
 
 ## Achievements
 
@@ -237,7 +259,7 @@ other settings, including pad scripts.
 | `sdk/xdk/4432/layout.toml` | This XDK's data layouts, each value with the instruction that proves it |
 | `src/` | The game's side of the port: the achievement list, the hooks, widescreen, the Extras additions |
 | `install.sh` | The installer: the steps under "Building it by hand", with checks |
-| `tools/` | `regen.sh`; `make_config.py` writes the recompiler's input; `disasm.py` disassembles by name; `coverage.py` reports what the game calls in the libraries |
+| `tools/` | `regen.sh`; `make_config.py` writes the recompiler's input; `disasm.py` disassembles by name; `coverage.py` reports what the game calls in the libraries; `check_game_code_dll.sh` and `sim_first_start.sh` check the Windows build (see "Cross-building for Windows") |
 | `docs/xdk-4432.md` | How this game differs from what the SDK expected, and the evidence |
 | `assets/`, `config/game.toml`, `generated/`, `build/` | Not in the repository: the game's files, what's derived from them, and build output |
 

@@ -420,6 +420,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
 
     app::GameFiles game;
     if (!app::FindGame(game)) return app::kExitNoGame;
+    if (!app::PrepareGameCode(game)) return app::kExitNoGameCode;
 
     bool splash = app::OpenSplash(), handover = app::StartHandover();
 

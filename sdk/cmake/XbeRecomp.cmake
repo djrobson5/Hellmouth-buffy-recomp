@@ -57,6 +57,13 @@ set(XBE_HOST_TOOLS "" CACHE PATH "Folder with xbe_recomp and xbe_symbols built f
 # the generated code is already in generated/<dir> (made by tools/regen.sh on another machine): no recompile step, and
 # the tools aren't built, which a cross build to Windows from another OS cannot run
 option(XBE_USE_GENERATED "Build from the existing generated/<dir> folder instead of running xbe_recomp" OFF)
+# the recompiled game code goes into <target>.dll, beside the executable, and not into it: the executable then holds none of
+# it, and the DLL can be compiled where the game is installed (llvm-mingw, from the xbe that is there). The DLL is
+# built here only as a check, by the game_code_dll target (see add_xbe_image).
+option(XBE_GAME_CODE_DLL "Build the recompiled game code into <target>.dll instead of the executable" OFF)
+if(XBE_GAME_CODE_DLL AND NOT MINGW)
+    message(FATAL_ERROR "XBE_GAME_CODE_DLL needs the llvm-mingw toolchain (sdk/cmake/llvm-mingw.cmake)")
+endif()
 if(XBE_USE_GENERATED)
     # nothing to build
 elseif(XBE_HOST_TOOLS)
@@ -98,6 +105,91 @@ set_source_files_properties(${XBE_SDK_DIR}/runtime/core/input.cpp PROPERTIES INC
 # glslang's headers likewise go to spirv.cpp alone (the kit records only the include folders of the recompiled code)
 set_source_files_properties(${XBE_SDK_DIR}/runtime/gpu/spirv.cpp PROPERTIES INCLUDE_DIRECTORIES "${glslang_SOURCE_DIR}")
 
+# The game code DLL's side of add_xbe_image: what the executable needs to be linked to it, and a target that builds the DLL
+# here, with the commands the player's PC runs at its first start (the compile and link flags below are the ones
+# that go into the executable as game_code_flags.h). The DLL is compiled for the mingw target without a C or C++ library, so
+# it holds only the recompiled code: it imports the runtime and its overrides from the executable, which exports them
+# (X86_HOST_API and X86_FUNC in cpu/x86_ops.h, host_exports.def.in), and the executable imports its recompiled functions
+# from the DLL by the names of imports.def, delay loaded.
+function(xbe_game_code_dll target GEN GEN_SOURCES)
+    set(CODE ${CMAKE_BINARY_DIR}/game_code)
+    get_filename_component(llvm_bin ${CMAKE_CXX_COMPILER} DIRECTORY)
+    find_program(XBE_LLVM_LIB llvm-lib HINTS ${llvm_bin} REQUIRED NO_DEFAULT_PATH)
+    find_program(XBE_CLANG clang HINTS ${llvm_bin} REQUIRED NO_DEFAULT_PATH)
+    find_program(XBE_LLD_LINK lld-link HINTS ${llvm_bin} REQUIRED NO_DEFAULT_PATH)
+
+    # the flags of the first start (and of game_code_flags.h): one place
+    set(compile_flags "-target x86_64-w64-mingw32 -std=c++20 -O2 -march=x86-64-v2 -fno-strict-aliasing -fms-extensions -nostdinc -nostdinc++ -w -DNDEBUG -DX86_GAME_CODE")
+    set(link_flags "/dll /noentry /nodefaultlib /machine:x64 /opt:noicf")
+    set(game_code_flags "// written by CMake (xbe_game_code_dll): the flags that compile and link the game code DLL\n#pragma once\n#define XBE_GAME_CODE_COMPILE_FLAGS L\"${compile_flags}\"\n#define XBE_GAME_CODE_LINK_FLAGS L\"${link_flags}\"\n")
+    file(CONFIGURE OUTPUT ${CODE}/game_code_flags.h CONTENT "${game_code_flags}" @ONLY)
+    separate_arguments(compile_args UNIX_COMMAND "${compile_flags}")
+    separate_arguments(link_args UNIX_COMMAND "${link_flags}")
+
+    # the executable's side: the import library that names where each recompiled function is, the delay loading, and the
+    # module definition file with what the DLL imports that is not the runtime's own
+    add_custom_command(
+        OUTPUT ${CODE}/code.lib
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CODE}
+        COMMAND ${XBE_LLVM_LIB} /def:${GEN}/imports.def /out:${CODE}/code.lib /machine:x64
+        DEPENDS ${GEN}/imports.def
+        COMMENT "Import library of ${target}.dll"
+        VERBATIM)
+    add_custom_target(${target}_imports DEPENDS ${CODE}/code.lib)
+    if(NOT XBE_USE_GENERATED)
+        add_dependencies(${target}_imports recompile_${target})  # imports.def is a byproduct of the recompile
+    endif()
+    add_dependencies(${target} ${target}_imports)
+    set(XBE_TARGET ${target})
+    configure_file(${XBE_SDK_DIR}/runtime/cpu/host_exports.def.in ${CODE}/host_exports.def @ONLY)
+    # the executable's own import library is what the DLL links against, as <target>.lib (not ENABLE_EXPORTS, which on mingw
+    # exports every symbol)
+    set(exe_implib ${CODE}/${target}.lib)
+    set_target_properties(${target} PROPERTIES ARCHIVE_OUTPUT_DIRECTORY ${CODE} IMPORT_PREFIX "" IMPORT_SUFFIX ".lib")
+    target_compile_definitions(${target} PRIVATE XBE_GAME_CODE_DLL)
+    target_include_directories(${target} PRIVATE ${CODE})
+    target_link_libraries(${target} PRIVATE ${CODE}/code.lib)
+    target_link_options(${target} PRIVATE ${CODE}/host_exports.def -Wl,--delayload=${target}.dll)
+    set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS ${CODE}/code.lib ${CODE}/host_exports.def)
+
+    # the headers the generated code includes, where the first start finds them: <include>/cpu, <include>/freestanding
+    file(GLOB freestanding CONFIGURE_DEPENDS ${XBE_SDK_DIR}/runtime/cpu/freestanding/*)
+    set(headers ${XBE_SDK_DIR}/runtime/cpu/x86_ops.h ${XBE_SDK_DIR}/runtime/cpu/x86_context.h)
+    add_custom_command(
+        OUTPUT ${CODE}/include.stamp
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CODE}/include/cpu ${CODE}/include/freestanding
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${headers} ${CODE}/include/cpu
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${freestanding} ${CODE}/include/freestanding
+        COMMAND ${CMAKE_COMMAND} -E touch ${CODE}/include.stamp
+        DEPENDS ${headers} ${freestanding}
+        VERBATIM)
+
+    # check only: the DLL built here, a compile for each generated file and then a link, as the first start does them
+    # (in the folder of the sources, the objects beside the DLL)
+    set(objects)
+    foreach(src ${GEN_SOURCES})
+        get_filename_component(name ${src} NAME_WLE)
+        set(object ${CODE}/${name}.obj)
+        add_custom_command(
+            OUTPUT ${object}
+            COMMAND ${XBE_CLANG} ${compile_args} -isystem ${CODE}/include/freestanding -I${CODE}/include
+                    -c ${name}.cpp -o ${object}
+            DEPENDS ${src} ${CODE}/include.stamp ${GEN}/x86_recomp_shared.h
+            WORKING_DIRECTORY ${GEN}
+            COMMENT "Compiling ${name}.cpp for ${target}.dll"
+            VERBATIM)
+        list(APPEND objects ${object})
+    endforeach()
+    add_custom_command(
+        OUTPUT ${CODE}/${target}.dll
+        COMMAND ${XBE_LLD_LINK} ${link_args} /def:${GEN}/exports.def /implib:${CODE}/dll.lib /out:${CODE}/${target}.dll
+                ${exe_implib} ${objects}
+        DEPENDS ${objects} ${GEN}/exports.def ${target}
+        COMMENT "Linking ${target}.dll"
+        VERBATIM)
+    add_custom_target(game_code_dll DEPENDS ${CODE}/${target}.dll)
+endfunction()
+
 # One executable per recompiled image: its code from config/<config> (partitions as that config sets them),
 # the SDK runtime, XBE_HOST_SOURCES shared by every image of the game, and src/<game_dir> hooks only this image has.
 # Expects assets/<xbe> and the config's out = "generated/<game_dir>". At run time the game may be a disc image instead.
@@ -112,7 +204,7 @@ function(add_xbe_image target xbe config partitions game_dir)
     if(NOT XBE_USE_GENERATED)
         add_custom_command(
             OUTPUT ${GEN}/codegen.stamp
-            BYPRODUCTS ${GEN_SOURCES} ${GEN}/x86_recomp_shared.h ${GEN}/image_symbols.h
+            BYPRODUCTS ${GEN_SOURCES} ${GEN}/x86_recomp_shared.h ${GEN}/image_symbols.h ${GEN}/exports.def ${GEN}/imports.def
             COMMAND xbe_recomp config/${config} --xdk ${XBE_SDK_DIR}/xdk
             COMMAND ${CMAKE_COMMAND} -E touch ${GEN}/codegen.stamp
             DEPENDS xbe_recomp ${configs} ${CMAKE_CURRENT_SOURCE_DIR}/assets/${xbe}
@@ -146,7 +238,11 @@ function(add_xbe_image target xbe config partitions game_dir)
     endif()
     file(CONFIGURE OUTPUT ${XBE_RC} CONTENT "${rc}")
     set_property(SOURCE ${XBE_RC} APPEND PROPERTY OBJECT_DEPENDS ${XBE_SDK_DIR}/runtime/app/app.manifest)
-    add_executable(${target} WIN32 ${XBE_RUNTIME_SOURCES} ${XBE_HOST_SOURCES} ${GAME_SOURCES} ${GEN_SOURCES} ${XBE_IMGUI_SOURCES} ${XBE_HASH} ${XBE_RC})
+    if(XBE_GAME_CODE_DLL)
+        add_executable(${target} WIN32 ${XBE_RUNTIME_SOURCES} ${XBE_HOST_SOURCES} ${GAME_SOURCES} ${XBE_IMGUI_SOURCES} ${XBE_HASH} ${XBE_RC})
+    else()
+        add_executable(${target} WIN32 ${XBE_RUNTIME_SOURCES} ${XBE_HOST_SOURCES} ${GAME_SOURCES} ${GEN_SOURCES} ${XBE_IMGUI_SOURCES} ${XBE_HASH} ${XBE_RC})
+    endif()
     if(NOT XBE_USE_GENERATED)
         add_dependencies(${target} recompile_${target})
     endif()
@@ -188,5 +284,8 @@ target_link_libraries(${target} PRIVATE tomlplusplus::tomlplusplus $<LINK_ONLY:S
         set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS ${pgo_profile})
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${pgo_profile})
         message(STATUS "${target}: PGO with ${pgo_profile}")
+    endif()
+    if(XBE_GAME_CODE_DLL)
+        xbe_game_code_dll(${target} ${GEN} "${GEN_SOURCES}")
     endif()
 endfunction()
