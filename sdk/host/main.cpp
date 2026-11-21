@@ -27,6 +27,7 @@
 #include "core/keys.h"
 #include "core/log.h"
 #ifdef XBE_GAME_CODE_DLL
+#include "app/game_build.h"
 #include "app/game_code_recipe.h"
 #include "cpu/dispatch.h"
 #endif
@@ -384,6 +385,14 @@ void Fail(int code, const std::wstring& message) {
     std::string text = Narrow(message);
     LOGE("Exit (%d): %s", code, text.c_str());
     logx::Flush();
+    if (Args().prepare) {
+        // as on Windows: the reason on stderr, and in compile.log, where a launcher looks for it too (this run's, not an earlier build's)
+        std::fprintf(stderr, "error: %s\n", text.c_str());
+        std::fflush(stderr);
+        std::error_code ec;
+        std::filesystem::create_directories(LogFolder(), ec);
+        std::ofstream(LogFolder() / "compile.log", std::ios::binary | std::ios::trunc) << "FAILED: " << text << "\n";
+    }
     // SDL's message boxes are the first thread's, and guest threads fail too: this waits for it to show one
     if (!Args().no_dialogs)
         SDL_RunOnMainThread(
@@ -822,6 +831,18 @@ int main() {
     logx::Init(LogFolder().string(), LogName(), Args().relaunched);
     CloseLogOnCrash();
     if (data_error) LOGE("data folder %s could not be made: %s", DataDir().string().c_str(), data_error.message().c_str());
+    if (Args().prepare) {
+        // a launcher's setup: the game's code built, nothing started, no settings read (a settings file that is wrong is no reason for it
+        // to fail), no SDL and no window. Without the game's code in a dylib there is nothing to build: the game only has to be there.
+        LOGR("%ls (%s), --prepare", kGame.title, IMAGE_XBE);
+        GameFiles game;
+        if (!ChooseDisc(game)) return kExitNoGame;
+#ifdef XBE_GAME_CODE_DLL
+        return PrepareOnly(game);
+#else
+        return kExitOk;
+#endif
+    }
 
     SDL_SetHint(SDL_HINT_APP_NAME, "Buffy the Vampire Slayer");
     // Full screen is a window over the whole screen, not a Space of its own: macOS's animation into a Space would play at
@@ -843,6 +864,9 @@ int main() {
     GameFiles game;
     if (!ChooseDisc(game)) return kExitOk;
 #ifdef XBE_GAME_CODE_DLL
+    // the code is built from the player's disc at the first start (and again after an update), behind a progress window; --game-code names
+    // a dylib of one's own (development) and builds nothing
+    if (g_game_code.empty() && !PrepareGameCode(game)) return kExitNoGameCode;
     {
         std::wstring problem;
         int code = 0;

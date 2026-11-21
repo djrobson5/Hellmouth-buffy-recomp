@@ -35,4 +35,13 @@ void TakeFullScreenControls(SDL_Window* window, void (*toggle)());  // the green
 void HidePointer(SDL_Window* window, bool want);  // hidden while over the picture and the app is in front
 int OpenInstance(const std::string& exe, const std::vector<std::string>& args);  // any thread; its pid, -1 outside an app
 
+// the first start's progress window (first_start_window.mm; AppKit, over the SDL application already started). Main thread only. Shown only
+// when somebody is there to look at it: never for --prepare, --no-dialogs or a level restart (first_start.cpp asks before it opens one).
+// A closed window is only a request (the player is asked before the build is stopped): ProgressCloseRequested says so once.
+bool ProgressOpen(const std::string& title);   // false when it can't be opened (the build then goes on without one)
+void ProgressShow(const std::string& heading, const std::string& stage, double fraction, const std::string& time_left);
+bool ProgressCloseRequested();
+bool ProgressAskStop(const std::string& title, const std::string& question);  // a question with Stop and Keep going; true: stop
+void ProgressClose();
+
 }  // namespace host

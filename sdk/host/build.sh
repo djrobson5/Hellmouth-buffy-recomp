@@ -93,6 +93,8 @@ ARGS=(-r "$REPO" -g "$GEN" -o "$OUT" -n "$NAME" ${GEN_OBJ:+-G "$GEN_OBJ"}
     -e "$RT/gpu/vk.cpp" -e "$RT/gpu/vk_loader.cpp" -e "$RT/gpu/vk_probe.cpp" -e "$RT/gpu/spirv.cpp"
     -e "$hash")
 if [ -n "$DYLIB" ]; then
+    # the first start: the build of the game's code from the player's disc, and its progress window
+    ARGS+=(-e "$HERE/first_start.cpp" -e "$HERE/first_start_window.mm" -e "$RT/app/game_build.cpp")
     NO_GEN=1 "$HERE/../harness/build.sh" "${ARGS[@]}"
     exec bash "$HERE/game_code_dylib.sh" -r "$REPO" -g "$GEN" -o "$OUT" -n "$NAME"
 fi
