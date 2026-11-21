@@ -157,15 +157,93 @@ std::string HintFor(const Layout& layout, bool did_not_start, uint32_t code, boo
     return hint;
 }
 
+// a command as the log shows it
+std::string Command(const fs::path& program, const std::vector<Str>& args) {
+    std::string line = U8(program);
+    for (const Str& a : args) {
+        fs::path p(a);
+        line += ' ' + U8(p);
+    }
+    return line;
+}
+
+enum class Ran { Ok, NotStarted, Failed, Cancelled };
+
+// one program, waited for: the line "run: <command>", then "exit: <what> after N ms". `code` is its exit code; `why` says what stopped one
+// that did not start. Cancelled when `cancel` was set (everything running is ended).
+Ran RunProgram(Runner& run, const fs::path& program, const std::vector<Str>& args, const fs::path& cwd, const std::atomic<bool>& cancel, uint32_t& code,
+               std::string& why) {
+    run.Note("run: " + Command(program, args));
+    int64_t began = NowMs();
+    int id = run.Start(program, args, cwd, why);
+    if (!id) return Ran::NotStarted;
+    for (;;) {
+        Runner::Ended ended = run.Wait(250);
+        if (cancel) {
+            run.KillAll();
+            return Ran::Cancelled;
+        }
+        if (!ended.id) continue;
+        if (ended.id != id) continue;  // not ours: nothing else runs now
+        run.Note("exit: " + ExitText(ended.code) + " after " + std::to_string(NowMs() - began) + " ms");
+        code = ended.code;
+        return ended.code == 0 ? Ran::Ok : Ran::Failed;
+    }
+}
+
+// the pictures, made: the two disc files into the scratch folder, `buffy_config --pictures` over them into <data>, and the marker last. Never a
+// failure of the build: what went wrong is a line in the log. False also when `cancel` ended it.
+bool MakePicturesImpl(const Layout& layout, const Recipe& recipe, const ReadPictures& read, Runner& run, const std::atomic<bool>& cancel) {
+    if (recipe.pictures <= 0) return true;
+    const fs::path scratch = layout.PicturesScratch();
+    std::error_code ec;
+    auto finish = [&](bool made, const std::string& note) {
+        fs::remove_all(scratch, ec);
+        run.Note("pictures: " + note);
+        return made;
+    };
+    run.Note("pictures: making the achievement pictures and the icon in " + U8(layout.data) + " (recipe " + std::to_string(recipe.pictures) + ")");
+    fs::remove(layout.PicturesMarker(), ec);  // what is there is not whole until this finishes
+    fs::remove_all(scratch, ec);
+    fs::create_directories(scratch, ec);
+    if (ec) return finish(false, "not made: cannot make " + U8(scratch) + ": " + ec.message());
+    PictureInputs in;
+    std::string why;
+    if (!read || !read(in, why)) return finish(false, "not made: " + (why.empty() ? std::string("the disc's files could not be read") : why));
+    if (!WriteFile(scratch / "levelThumbnails.mtx", in.thumbnails.data(), in.thumbnails.size()) ||
+        !WriteFile(scratch / "launch_buffy.xpr", in.launch.data(), in.launch.size()))
+        return finish(false, "not made: cannot write into " + U8(scratch));
+    fs::create_directories(layout.data, ec);
+    uint32_t code = 0;
+    switch (RunProgram(run, layout.Tool("buffy_config"), {A("--pictures"), A("levelThumbnails.mtx"), A("launch_buffy.xpr"), layout.data.native()},
+                       scratch, cancel, code, why)) {
+        case Ran::Ok:
+            break;
+        case Ran::Cancelled:
+            return finish(false, "stopped");
+        case Ran::NotStarted:
+            return finish(false, "not made: buffy_config.exe could not be started (" + why + ")");
+        case Ran::Failed:
+            return finish(false, "not made: buffy_config.exe failed (" + ExitText(code) + ")");
+    }
+    for (const char* name : {"Buffy.ico", "Buffy.png"})
+        if (!Exists(layout.data / name)) return finish(false, std::string("not made: buffy_config.exe wrote no ") + name);
+    const std::string marker = "pictures " + std::to_string(recipe.pictures) + "\n";
+    if (!WriteFile(layout.PicturesMarker(), marker.data(), marker.size()))
+        return finish(false, "not made: cannot write " + U8(layout.PicturesMarker()));
+    return finish(true, "made");
+}
+
 // A step that runs programs; the build's state is all in here so that the steps read in order
 class Builder {
 public:
     Builder(const Layout& layout, const Recipe& recipe, Runner& run, Progress& progress, Failure& failure)
         : layout_(layout), recipe_(recipe), run_(run), progress_(progress), failure_(failure), work_(layout.Work()) {}
 
-    Outcome Run(const ReadInputs& read);
+    Outcome Run(const ReadInputs& read, const ReadPictures& pictures);
 
 private:
+
     void SetStage(gamebuild::Stage stage) {
         progress_.stage = stage;
         Changed();
@@ -185,6 +263,7 @@ private:
     bool Prepare(const ReadInputs& read);
     bool Config();
     bool Translate();
+    bool Pictures(const ReadPictures& read);
     bool Plan();
     void RemoveTemps();
     bool Compile();
@@ -197,14 +276,6 @@ private:
         std::string key;
         uint64_t bytes = 0;
     };
-    std::string Command(const fs::path& program, const std::vector<Str>& args) {
-        std::string line = U8(program);
-        for (const Str& a : args) {
-            fs::path p(a);
-            line += ' ' + U8(p);
-        }
-        return line;
-    }
 
     const Layout& layout_;
     const Recipe& recipe_;
@@ -220,23 +291,18 @@ private:
 
 bool Builder::RunTool(const std::string& step, const char* tool, const std::vector<Str>& args, const fs::path& cwd) {
     std::string why;
-    run_.Note("run: " + Command(layout_.Tool(tool), args));
-    int64_t began = NowMs();
-    int id = run_.Start(layout_.Tool(tool), args, cwd, why);
-    if (!id) return Fail(step, std::string(tool) + ".exe could not be started (" + why + ")", HintFor(layout_, true, 0, false));
-    for (;;) {
-        Runner::Ended ended = run_.Wait(250);
-        if (progress_.cancel) {
-            run_.KillAll();
+    uint32_t code = 0;
+    switch (RunProgram(run_, layout_.Tool(tool), args, cwd, progress_.cancel, code, why)) {
+        case Ran::Ok:
+            return true;
+        case Ran::Cancelled:
             return false;
-        }
-        if (!ended.id) continue;
-        if (ended.id != id) continue;  // not ours: nothing else runs now
-        run_.Note("exit: " + ExitText(ended.code) + " after " + std::to_string(NowMs() - began) + " ms");
-        if (ended.code != 0)
-            return Fail(step, std::string(tool) + ".exe failed (" + ExitText(ended.code) + ")", HintFor(layout_, false, ended.code, false));
-        return true;
+        case Ran::NotStarted:
+            return Fail(step, std::string(tool) + ".exe could not be started (" + why + ")", HintFor(layout_, true, 0, false));
+        case Ran::Failed:
+            break;
     }
+    return Fail(step, std::string(tool) + ".exe failed (" + ExitText(code) + ")", HintFor(layout_, false, code, false));
 }
 
 bool Builder::Prepare(const ReadInputs& read) {
@@ -301,6 +367,21 @@ bool Builder::Translate() {
                     "again, and if it still fails keep logs\\compile.log (it says what the sources claimed and what was expected).");
     }
     return true;
+}
+
+// the achievement pictures and the icon, when they are not made yet: never a failure, only a cancel stops the build here
+bool Builder::Pictures(const ReadPictures& read) {
+    SetStage(Stage::Pictures);
+    if (!read) {
+        run_.Note("pictures: none to make");
+        return true;
+    }
+    if (PicturesCurrent(layout_, recipe_)) {
+        run_.Note("pictures: already made");
+        return true;
+    }
+    MakePicturesImpl(layout_, recipe_, read, run_, progress_.cancel);
+    return !progress_.cancel;
 }
 
 // what a compile that was ended left: its own output beside the object's name, and the compiler's scratch file for it
@@ -472,7 +553,7 @@ bool Builder::Install() {
     return true;
 }
 
-Outcome Builder::Run(const ReadInputs& read) {
+Outcome Builder::Run(const ReadInputs& read, const ReadPictures& pictures) {
     auto done = [&](bool ok) {
         if (ok) return Outcome::Built;
         return progress_.cancel ? Outcome::Cancelled : Outcome::Failed;
@@ -480,6 +561,7 @@ Outcome Builder::Run(const ReadInputs& read) {
     if (!Prepare(read)) return done(false);
     if (!Config()) return done(false);
     if (!Translate()) return done(false);
+    if (!Pictures(pictures)) return done(false);
     if (!Plan()) return done(false);
     if (!Compile()) return done(false);
     if (!Link()) return done(false);
@@ -490,9 +572,22 @@ Outcome Builder::Run(const ReadInputs& read) {
 
 }  // namespace
 
-Outcome Build(const Layout& layout, const Recipe& recipe, const ReadInputs& read, Runner& run, Progress& progress, Failure& failure) {
+Outcome Build(const Layout& layout, const Recipe& recipe, const ReadInputs& read, const ReadPictures& pictures, Runner& run, Progress& progress,
+              Failure& failure) {
     Builder builder(layout, recipe, run, progress, failure);
-    return builder.Run(read);
+    return builder.Run(read, pictures);
+}
+
+bool PicturesCurrent(const Layout& layout, const Recipe& recipe) {
+    if (recipe.pictures <= 0) return true;  // none to make
+    std::error_code ec;
+    return ReadText(layout.PicturesMarker()) == "pictures " + std::to_string(recipe.pictures) + "\n" && Exists(layout.data / "Buffy.ico") &&
+           Exists(layout.data / "Buffy.png") && fs::is_directory(layout.data / "achievements", ec);
+}
+
+bool MakePictures(const Layout& layout, const Recipe& recipe, const ReadPictures& read, Runner& run) {
+    const std::atomic<bool> never{false};
+    return MakePicturesImpl(layout, recipe, read, run, never);
 }
 
 std::string Blocker(const Layout& layout, const Recipe& recipe) {
@@ -564,6 +659,7 @@ double Progress::Fraction() const {
         case Stage::Reading: return 0.0;
         case Stage::Config: return 0.01;
         case Stage::Translating: return 0.03;
+        case Stage::Pictures: return 0.07;
         case Stage::Planning: return 0.09;
         case Stage::Compiling: {
             uint64_t total = bytes_total.load();
@@ -581,6 +677,7 @@ std::string Progress::Text() const {
         case Stage::Reading: return "Reading the game from your disc";
         case Stage::Config: return "Setting up";
         case Stage::Translating: return "Translating the game's code";
+        case Stage::Pictures: return "Making the achievement pictures and the icon";
         case Stage::Planning: return "Checking what is already built";
         case Stage::Compiling:
             return "Compiling the game's code, file " + std::to_string(std::min(files_done.load() + 1, std::max(files_total.load(), 1u))) +

@@ -254,13 +254,15 @@ void Flush() {
     SetCarriedNotes(ids.empty() ? nullptr : ids.c_str());
 }
 
-// <id>.png: beside the executable, or in the app's resources (sdk/host/bundle.sh). Null if there's none or no way to draw it.
+// <id>.png: beside the executable, in the data folder (where the Windows first start makes them from the player's disc), or in the app's
+// resources (sdk/host/bundle.sh). Null if there's none or no way to draw it.
 void* Icon(const std::string& id) {
     if (!app::g_ui_picture) return nullptr;
     static const std::filesystem::path folder = [] {
-        const std::filesystem::path beside = app::ExeDir() / "achievements";
         std::error_code error;
-        return std::filesystem::is_directory(beside, error) ? beside : app::ExeDir().parent_path() / "Resources" / "achievements";
+        for (const std::filesystem::path& place : {app::ExeDir() / "achievements", app::DataDir() / "achievements"})
+            if (std::filesystem::is_directory(place, error)) return place;
+        return app::ExeDir().parent_path() / "Resources" / "achievements";
     }();
     return app::g_ui_picture(folder / (id + ".png"));
 }

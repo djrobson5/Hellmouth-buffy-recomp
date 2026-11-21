@@ -36,7 +36,9 @@ target_link_libraries(xbe_symbols PRIVATE Zydis tomlplusplus::tomlplusplus)
 
 # Hellmouth's config tool: the port of make_config.py that writes config/game.toml from final.map, and the list of the SDK's names
 # it binds, which it finds in the runtime's sources at build time (sdk_names.txt, beside the program: the player's PC has no sources)
-add_executable(buffy_config ${CMAKE_CURRENT_LIST_DIR}/buffy_config/main.cpp ${TOOL_RC})
+# (with pictures.cpp: the achievement pictures and the icon the first start makes from the disc, `--pictures`; stb_image_write writes the PNGs)
+add_executable(buffy_config ${CMAKE_CURRENT_LIST_DIR}/buffy_config/main.cpp ${CMAKE_CURRENT_LIST_DIR}/buffy_config/pictures.cpp ${TOOL_RC})
+target_include_directories(buffy_config PRIVATE ${SDK}/runtime)
 if(CMAKE_CROSSCOMPILING)
     # the names are found by a program for this machine
     set(XBE_HOST_TOOLS "" CACHE PATH "Folder with buffy_config built for this machine (a native build of this folder), when cross-compiling")

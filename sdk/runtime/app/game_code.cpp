@@ -94,7 +94,8 @@ std::wstring Quote(const std::wstring& arg) {
 // process ending, ends them all. Their output and the build's own notes go to logs\compile.log
 class WinRunner : public gb::Runner {
 public:
-    explicit WinRunner(const fs::path& log) {
+    // append: the log is added to, not started again (a start that only makes the pictures must not wipe the build's log)
+    explicit WinRunner(const fs::path& log, bool append = false) {
         job_ = CreateJobObjectW(nullptr, nullptr);
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION limit{};
         limit.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -102,7 +103,7 @@ public:
         std::error_code ec;
         fs::create_directories(log.parent_path(), ec);
         SECURITY_ATTRIBUTES inherit{sizeof(inherit), nullptr, TRUE};
-        log_ = CreateFileW(log.c_str(), FILE_APPEND_DATA | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE, &inherit, CREATE_ALWAYS,
+        log_ = CreateFileW(log.c_str(), FILE_APPEND_DATA | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE, &inherit, append ? OPEN_ALWAYS : CREATE_ALWAYS,
                            FILE_ATTRIBUTE_NORMAL, nullptr);
         if (log_ == INVALID_HANDLE_VALUE) LOGE("game code: cannot write %s (%lu)", PathUtf8(log).c_str(), GetLastError());
         nul_ = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &inherit, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -201,6 +202,32 @@ bool ReadDisc(const GameFiles& game, gb::Inputs& in, std::string& why) {
         return false;
     }
     in.map.assign(std::istreambuf_iterator<char>(f), {});
+    return true;
+}
+
+// the two disc files the pictures are made from. A disc that lacks them still builds the game, so this fails apart from ReadDisc
+bool ReadPictureFiles(const GameFiles& game, gb::PictureInputs& in, std::string& why) {
+    struct File {
+        const char* disc_path;  // the disc's, with backslashes
+        const wchar_t* folder_path;
+        std::vector<uint8_t>& into;
+    };
+    for (const File& file : {File{"interfc\\levelThumbnails.mtx", L"interfc/levelThumbnails.mtx", in.thumbnails},
+                             File{"media\\launch_buffy.xpr", L"media/launch_buffy.xpr", in.launch}}) {
+        if (const kernel::Disc* disc = kernel::MountedDisc()) {
+            if (!disc->Load(file.disc_path, file.into)) {
+                why = std::string("the disc image has no ") + file.disc_path;
+                return false;
+            }
+            continue;
+        }
+        std::ifstream f(game.dir / file.folder_path, std::ios::binary);
+        if (!f) {
+            why = PathUtf8(game.dir) + " has no " + Utf8(file.folder_path);
+            return false;
+        }
+        file.into.assign(std::istreambuf_iterator<char>(f), {});
+    }
     return true;
 }
 
@@ -508,7 +535,9 @@ Result BuildWithWindow(const GameFiles& game, const gb::Layout& layout, const gb
     gb::Failure failure;
     gb::Outcome outcome = gb::Outcome::Failed;
     std::thread worker([&] {
-        outcome = gb::Build(layout, recipe, [&](gb::Inputs& in, std::string& why) { return ReadDisc(game, in, why); }, runner, g_progress, failure);
+        outcome = gb::Build(
+            layout, recipe, [&](gb::Inputs& in, std::string& why) { return ReadDisc(game, in, why); },
+            [&](gb::PictureInputs& in, std::string& why) { return ReadPictureFiles(game, in, why); }, runner, g_progress, failure);
         g_ready = outcome == gb::Outcome::Built;
         PostMessageW(g_window, kBuildDone, outcome == gb::Outcome::Built, 0);
     });
@@ -556,17 +585,31 @@ gb::DllState State(const gb::Layout& layout, const gb::Recipe& recipe) {
     return state;
 }
 
+// The achievement pictures and the icon, made when the marker says they are not: on a start whose DLL is current (the build makes them
+// otherwise). No window: it takes a moment. Never fatal; what went wrong is in logs\compile.log, which is added to.
+void EnsurePictures(const GameFiles& game, const gb::Layout& layout, const gb::Recipe& recipe) {
+    if (gb::PicturesCurrent(layout, recipe)) return;
+    BuildLock lock;  // a copy started at the same time is making them
+    if (gb::PicturesCurrent(layout, recipe)) return;
+    WinRunner runner(layout.Log(), true);
+    gb::MakePictures(layout, recipe, [&](gb::PictureInputs& in, std::string& why) { return ReadPictureFiles(game, in, why); }, runner);
+}
+
 }  // namespace
 
 bool PrepareGameCode(const GameFiles& game) {
     const gb::Layout layout = MakeLayout();
     const gb::Recipe recipe = gamecode::Recipe(Slots());
     gb::DllState state = State(layout, recipe);
-    if (state == gb::DllState::Current) return LoadCode(CodeDll(layout));
+    const bool quiet = Args().relaunched || Args().no_dialogs;
+    if (state == gb::DllState::Current) {
+        if (!quiet) EnsurePictures(game, layout, recipe);
+        return LoadCode(CodeDll(layout));
+    }
 
     // asked for with no window and no questions (a launcher, or the game restarting for a level), the DLL has to be there: the
     // launcher builds it first (--prepare), and a restart is not the time to start a build
-    if (Args().relaunched || Args().no_dialogs) {
+    if (quiet) {
         std::wstring dll = Wide(IMAGE_LIBRARY);
         if (state == gb::DllState::Missing)
             Fail(kExitNoGameCode, L"The game's code, " + dll + L", has not been built yet in " + layout.Build().wstring() +
@@ -592,6 +635,7 @@ bool PrepareGameCode(const GameFiles& game) {
                 return false;
         }
     }
+    EnsurePictures(game, layout, recipe);  // made by the build, unless it was a copy started earlier that built the DLL
     return LoadCode(CodeDll(layout));
 }
 
@@ -604,6 +648,7 @@ int PrepareOnly(const GameFiles& game) {
         if (Args().clean_work) DeleteWork(layout);
     };
     if (State(layout, recipe) == gb::DllState::Current) {
+        EnsurePictures(game, layout, recipe);  // the DLL being current says nothing of the pictures
         PrintOut("progress 1.000 The game's code is up to date");
         clean();
         return kExitOk;
@@ -633,7 +678,9 @@ int PrepareOnly(const GameFiles& game) {
     progress.changed = report;
     report();
     gb::Failure failure;
-    gb::Outcome outcome = gb::Build(layout, recipe, [&](gb::Inputs& in, std::string& why) { return ReadDisc(game, in, why); }, runner, progress, failure);
+    gb::Outcome outcome = gb::Build(
+        layout, recipe, [&](gb::Inputs& in, std::string& why) { return ReadDisc(game, in, why); },
+        [&](gb::PictureInputs& in, std::string& why) { return ReadPictureFiles(game, in, why); }, runner, progress, failure);
     if (outcome != gb::Outcome::Built) {
         std::string line = outcome == gb::Outcome::Cancelled ? std::string("stopped") : failure.Line();
         if (!failure.hint.empty()) line += " " + failure.hint;

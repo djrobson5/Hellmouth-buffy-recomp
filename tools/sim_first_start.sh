@@ -11,7 +11,9 @@
 #   what the build made; the second start (the DLL is current: nothing runs); a deleted DLL (every object is reused: only the link
 #   runs); a build stopped half way and carried on; an update (a new ABI token: all compiled again); a damaged DLL; what the
 #   player is told when a compiler fails, a tool is missing, a tool will not start, the disc is not there; a data folder of its own
-#   with the compiler folder read only; the game from a folder of extracted files.
+#   with the compiler folder read only; the game from a folder of extracted files; the achievement pictures and the icon the first
+#   start makes in the data folder (the pictures decode to the pixels tools/make_achievement_icons.py makes), made on their own marker
+#   when the DLL is current, made again by a newer recipe, and never what stops a start (a disc without the files, a tool that fails).
 #   tools/sim_first_start.sh              (needs out/Hellmouth-<version>-windows-x64.zip: tools/package_windows.sh)
 #   needs: build/tools/{xbe_recomp,buffy_config,sdk_names.txt} (tools/regen.sh and tools/check_config_tool.sh build them), the disc
 #   image in "Buffy the Vampire Slayer (USA)/" (DISC=<image> to name another), out/build/win-x64-mingw (the exe's flags and
@@ -79,6 +81,16 @@ dll_stamp=$("$TC/llvm-strings" "$DLL" | grep '^xbe-game-code ' | sort -u)
 [ ! -d "$DATA/build/new" ]; chk $? "no staging folder is left"
 [ -z "$(find "$W" -name '*.tmp')" ]; chk $? "no temporary file is left"
 grep -q '^run: ' "$DATA/logs/compile.log" && grep -q '^built: ' "$DATA/logs/compile.log"; chk $? "logs/compile.log has the commands and the result ($(wc -l < "$DATA/logs/compile.log" | tr -d ' ') lines)"
+# the pictures and the icon the first start made, in the data folder
+[ "$(cat "$DATA/pictures.stamp")" = "pictures 1" ]; chk $? "pictures.stamp says the recipe's version (pictures 1)"
+[ "$(ls "$DATA/achievements" | grep -c '\.png$')" = 28 ] && [ -f "$DATA/Buffy.ico" ] && [ -f "$DATA/Buffy.png" ]; chk $? "the first start made 28 achievement pictures, Buffy.png and Buffy.ico in <data>"
+python3 "$REPO/tools/make_achievement_icons.py" "$DISC" --out "$D/py-icons" > /dev/null || die "make_achievement_icons.py"
+python3 "$REPO/tools/compare_pngs.py" "$DATA/achievements" "$D/py-icons"; chk $? "the achievement pictures decode pixel for pixel to the ones make_achievement_icons.py makes"
+python3 "$REPO/tools/check_ico.py" "$DATA/Buffy.ico" 256 48 32 16; chk $? "Buffy.ico holds 256 (PNG), 48, 32 and 16 (DIB), each whole"
+file "$DATA/Buffy.png" | grep -q "PNG image data, 256 x 256"; chk $? "Buffy.png is 256 x 256 ($(stat -f %z "$DATA/Buffy.png") bytes)"
+mkdir -p "$REPO/out/hellmouth-icon-check"; cp "$DATA/Buffy.png" "$DATA/Buffy.ico" "$REPO/out/hellmouth-icon-check/"
+[ ! -d "$DATA/cache/pictures" ]; chk $? "the scratch folder of the two disc files is gone"
+grep -q '^pictures: made$' "$DATA/logs/compile.log"; chk $? "compile.log says the pictures were made"
 if [ -f "$B/game_code/Buffy.dll" ]; then
     # the PE time stamp (four bytes at e_lfanew + 8) is the only difference expected
     pe=$(od -An -tu4 -j60 -N4 "$DLL" | tr -d ' ')
@@ -161,6 +173,8 @@ chmod -R a-w "$APP/compiler"
 "$FSC" --app "$APP" --data "$DATA2" --game "$DISC" --slots "$SLOTS" > "$D/data2.out" 2>&1; chk $? "built with the data folder elsewhere and the compiler folder read only (nothing is written beside the program)"
 chmod -R u+w "$APP/compiler"
 [ -f "$DATA2/build/Buffy.dll" ] && [ -f "$DATA2/logs/compile.log" ] && [ -d "$DATA2/cache/game-code" ]; chk $? "build/, logs/ and cache/game-code/ are in the data folder"
+[ "$(ls "$DATA2/achievements" | grep -c '\.png$')" = 28 ] && [ -f "$DATA2/Buffy.ico" ] && [ -f "$DATA2/Buffy.png" ] && [ -f "$DATA2/pictures.stamp" ]; chk $? "the pictures and the icon are in the data folder too, written with the compiler folder read only"
+python3 "$REPO/tools/compare_pngs.py" "$DATA2/achievements" "$D/py-icons" > /dev/null; chk $? "and they are the same pictures"
 [ "$(stat -f %z "$DATA2/build/Buffy.dll")" = "$(stat -f %z "$DLL")" ]; chk $? "its DLL is the same size ($(stat -f %z "$DATA2/build/Buffy.dll") bytes)"
 
 echo "== 9. the game from a folder of extracted files instead of the image"
@@ -173,6 +187,49 @@ echo "a folder with no final.map:"
 mkdir -p "$D/nomap"; cp "$D/extracted/Default.xbe" "$D/nomap/"; rm "$DATA2/build/Buffy.dll"
 "$FSC" --app "$APP" --data "$DATA2" --game "$D/nomap" > "$D/nomap.out" 2> "$D/nomap.err"; code=$?
 head -1 "$D/nomap.err"; [ $code = 9 ]; chk $? "refused with the step named"
+
+echo "== 10. the pictures on their own: the DLL is current, the pictures are not made (or are made by an older recipe)"
+"$FSC" --app "$APP" --data "$DATA2" --game "$DISC" --slots "$SLOTS" > "$D/p0.out" 2>&1   # the DLL there since section 9 is gone: built again from the kept objects
+"$FSC" --app "$APP" --data "$DATA2" --game "$DISC" --check > /dev/null; chk $? "a start whose DLL is current"
+cp "$DATA2/build/Buffy.dll" "$D/before.dll"; cp "$DATA2/achievements/kills_1.png" "$D/kills_1.before.png"
+lines_before=$(wc -l < "$DATA2/logs/compile.log"); compiles_before=$(grep -c '^run: .*clang' "$DATA2/logs/compile.log")
+rm -rf "$DATA2/achievements" "$DATA2/Buffy.ico" "$DATA2/Buffy.png" "$DATA2/pictures.stamp"
+"$FSC" --app "$APP" --data "$DATA2" --game "$DISC" > "$D/p1.out" 2>&1; code=$?
+grep -q '^pictures: made$' "$D/p1.out" && [ $code = 0 ]; chk $? "with no pictures at all it makes them, with exit 0 ($(grep '^pictures' "$D/p1.out"))"
+cmp -s "$DATA2/build/Buffy.dll" "$D/before.dll"; chk $? "and the DLL is not built again (the same bytes)"
+[ "$(grep -c '^run: .*clang' "$DATA2/logs/compile.log")" = "$compiles_before" ] && grep -q '^built: ' "$DATA2/logs/compile.log"; chk $? "no compile or link ran, and the earlier build's lines are still in compile.log (it is added to, not started again)"
+[ "$(wc -l < "$DATA2/logs/compile.log")" -gt "$lines_before" ] && tail -8 "$DATA2/logs/compile.log" | grep -q '^pictures: made$'; chk $? "the log has the pictures' own lines at its end"
+python3 "$REPO/tools/compare_pngs.py" "$DATA2/achievements" "$D/py-icons" > /dev/null && [ "$(cat "$DATA2/pictures.stamp")" = "pictures 1" ]; chk $? "the same 28 pictures and the marker are back"
+rm -rf "$DATA2/achievements"
+"$FSC" --app "$APP" --data "$DATA2" --game "$DISC" > "$D/p2.out" 2>&1; grep -q '^pictures: made$' "$D/p2.out"; chk $? "a missing achievements folder alone is made again (the marker is not enough)"
+"$FSC" --app "$APP" --data "$DATA2" --game "$DISC" > "$D/p3.out" 2>&1; grep -q '^pictures: current$' "$D/p3.out" && [ "$(wc -l < "$DATA2/logs/compile.log")" -gt 0 ]; chk $? "and with everything there the next start makes nothing ($(grep '^pictures' "$D/p3.out"))"
+lines_now=$(wc -l < "$DATA2/logs/compile.log")
+"$FSC" --app "$APP" --data "$DATA2" --game "$DISC" --pictures 2 > "$D/p4.out" 2>&1; grep -q '^pictures: made$' "$D/p4.out" && [ "$(cat "$DATA2/pictures.stamp")" = "pictures 2" ]; chk $? "an executable with a newer picture recipe (2) makes them again over the old ones: the marker says 2"
+cmp -s "$DATA2/build/Buffy.dll" "$D/before.dll"; chk $? "and the DLL is still the same bytes"
+"$FSC" --app "$APP" --data "$DATA2" --game "$DISC" --pictures 2 > "$D/p5.out" 2>&1; [ "$(wc -l < "$DATA2/logs/compile.log")" -gt "$lines_now" ] && grep -q '^pictures: current$' "$D/p5.out"; chk $? "and the start after that makes nothing"
+"$FSC" --app "$APP" --data "$DATA2" --game "$DISC" > "$D/p6.out" 2>&1; cmp -s "$D/kills_1.before.png" "$DATA2/achievements/kills_1.png"; chk $? "the recipe back at 1 gives the first pictures again ($(grep '^pictures' "$D/p6.out"))"
+
+echo "== 11. a picture that cannot be made is never what stops a start (on copies of the data folder)"
+rm -rf "$D/p11"; mkdir -p "$D/p11"
+# a: the disc of extracted files has no interfc/ or media/: the build goes on, the log says why, and the next start tries again
+rm -rf "$DATA2/achievements" "$DATA2/Buffy.ico" "$DATA2/Buffy.png" "$DATA2/pictures.stamp"
+"$FSC" --app "$APP" --data "$DATA2" --game "$D/extracted" > "$D/q1.out" 2>&1; code=$?
+[ $code = 0 ] && grep -q '^pictures: not made$' "$D/q1.out" && grep -q '^pictures: not made: .*has no interfc/levelThumbnails.mtx' "$DATA2/logs/compile.log"; chk $? "a folder with no interfc/: a start with a current DLL goes on (exit $code) and compile.log says why ($(grep -o 'not made: .*' "$DATA2/logs/compile.log" | tail -1))"
+[ ! -f "$DATA2/pictures.stamp" ] && [ ! -f "$DATA2/Buffy.ico" ]; chk $? "and no marker is written, so the next start tries again"
+rm "$DATA2/build/Buffy.dll"
+"$FSC" --app "$APP" --data "$DATA2" --game "$D/extracted" --slots "$SLOTS" > "$D/q2.out" 2> "$D/q2.err"; code=$?
+[ $code = 0 ] && [ -f "$DATA2/build/Buffy.dll" ] && grep -q '^built: ' "$DATA2/logs/compile.log" && grep -q '^pictures: not made: ' "$DATA2/logs/compile.log" && [ ! -s "$D/q2.err" ]; chk $? "the same in a build: the DLL is built, exit 0, no error, the log says the pictures were not made"
+# b: the disc image again
+"$FSC" --app "$APP" --data "$DATA2" --game "$DISC" > "$D/q3.out" 2>&1; grep -q '^pictures: made$' "$D/q3.out"; chk $? "the disc image again: the pictures are made after all"
+# c: the tool fails or is not there: on a copy of the app folder
+cp -c -R "$APP" "$D/p11/app"; rm -rf "$D/p11/app/achievements" "$D/p11/app/Buffy.ico" "$D/p11/app/Buffy.png" "$D/p11/app/pictures.stamp" "$D/p11/app/cache" "$D/p11/app/logs"
+printf '#!/bin/sh\necho "buffy_config: simulated failure" >&2\nexit 3\n' > "$D/p11/app/compiler/buffy_config.exe"; chmod +x "$D/p11/app/compiler/buffy_config.exe"
+"$FSC" --app "$D/p11/app" --data "$D/p11/app" --game "$DISC" > "$D/q4.out" 2>&1; code=$?
+[ $code = 0 ] && grep -q '^pictures: not made: buffy_config.exe failed (exit code 3)' "$D/p11/app/logs/compile.log" && grep -q 'simulated failure' "$D/p11/app/logs/compile.log" && [ ! -f "$D/p11/app/pictures.stamp" ]; chk $? "a picture tool that fails: the start goes on (exit $code), the log has its message and the exit code, no marker"
+rm "$D/p11/app/compiler/buffy_config.exe"
+"$FSC" --app "$D/p11/app" --data "$D/p11/app" --game "$DISC" > "$D/q5.out" 2>&1; code=$?
+[ $code = 0 ] && grep -q '^pictures: not made: buffy_config.exe could not be started' "$D/p11/app/logs/compile.log"; chk $? "a picture tool that is not there: the start goes on (exit $code), the log says it could not be started"
+rm -rf "$D/p11"
 
 echo
 [ $fail = 0 ] && echo "all checks passed" || echo "SOME CHECKS FAILED"

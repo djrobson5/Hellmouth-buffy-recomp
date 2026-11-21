@@ -66,7 +66,8 @@ freely, subject to the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 
 
-stb_image v2.30 and stb_image_write v1.16 (https://github.com/nothings/stb, commit 2c980bb5), texture pack PNG files
+stb_image v2.30 and stb_image_write v1.16 (https://github.com/nothings/stb, commit 2c980bb5), texture pack PNG files, and the PNG files the
+first start writes (buffy_config --pictures)
 
 MIT License
 

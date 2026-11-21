@@ -185,7 +185,8 @@ never ask.
 
 **Where things are kept.** `--data <dir>` (or `RECOMPLAUNCHER_DATA` in the environment) is one folder for everything the game writes:
 `settings.toml`, `hdd\` (saves), `logs\`, `Screenshots\`, `shadercache\`, `textures\`, crash dumps, `achievements.txt` and
-`disc_image.txt`, and the built game code (`build\`, `cache\game-code\`). It defaults to the folder of the exe, which is where they
+`disc_image.txt`, the built game code (`build\`, `cache\game-code\`) and the pictures the first start makes from the disc (`achievements\`,
+`Buffy.ico`, `Buffy.png`, `pictures.stamp`). It defaults to the folder of the exe, which is where they
 were already. `--config`, `--saves`, `--log`, `--textures`, `--shader-cache` and `--screenshots` still name their own places, and what
 ships with the exe and is only read (the splash, subtitles, achievement pictures, the compiler folder) stays beside it. Options take
 `--name value` or `--name=value`.
@@ -207,6 +208,20 @@ of the game), a window shows the build, which `sdk/runtime/app/game_build.cpp` d
    time, so they are compared by content), so a closed window or a failure loses only the files in progress;
 4. `lld-link.exe` links them against `compiler\Buffy.lib` into `<data>\build\new\Buffy.dll`, whose stamp is read and must be the
    executable's, and which is then moved to `<data>\build\Buffy.dll`.
+
+**The pictures and the icon.** A release holds no picture from the game either. The first start also makes, from the same disc, the
+achievement pictures (`<data>\achievements\<id>.png`: the crops `tools/make_achievement_icons.py` makes, as the same pixels) and the
+game's icon (`<data>\Buffy.png`, 256 pixels, and `<data>\Buffy.ico` with 256, 48, 32 and 16: the composition of `tools/make_icon.py`, the
+moon and the name over the purple sky, as a full square), by `buffy_config.exe --pictures <levelThumbnails.mtx> <launch_buffy.xpr> <folder>`
+(`tools/buffy_config/pictures.cpp`) over the two disc files it extracts (`interfc\levelThumbnails.mtx`, `media\launch_buffy.xpr`) into
+`<data>\cache\pictures` while it works. They are not part of the DLL: they have a marker of their own, `<data>\pictures.stamp`, which holds
+the version of the recipe (`kPicturesRecipe` in `game_code_recipe.h`; raise it when a pick or the icon's design changes) and is written when
+everything is there. So a start whose DLL is current but whose pictures are not made, or were made by an older recipe, makes them, with no
+window and in a moment, in a normal start and in `--prepare`; the build makes them after the translation when they are missing. A
+`--relaunched` or `--no-dialogs` start makes none. A picture that cannot be made (the disc lacks a file, the tool is gone) is never
+what stops a start: `logs\compile.log` gets a line (`pictures: not made: <reason>`, added to the log, not replacing it), no marker is
+written, and the next start tries again. The game finds the pictures in the data folder (`achievements.cpp`, after the folder beside the
+exe), and sets `Buffy.ico` on its window and the taskbar (`window_icon.cpp`; without it the window keeps the executable's icon).
 
 Then the window offers Start (or A on a controller) and Exit, and to delete the work folder (about 300 MB; keeping it makes a later
 rebuild much quicker). Every program runs without a window, below normal priority, in a job object that ends them with the game; their
@@ -239,9 +254,12 @@ compiler\Buffy.lib  include\cpu\  include\freestanding\  xdk\4432\layout.toml  L
 `clang`, `lld`, `xbe_recomp` and `buffy_config` in it under the names the zip gives them, and runs the first start's own build code
 (`game_build.cpp`, with a POSIX runner in `tools/first_start_check.cpp` in place of the Windows one) over it, reading the disc image
 through `kernel::Disc`: a first build, a current DLL, a deleted DLL, a build stopped and carried on, an update (a new ABI token), a
-damaged DLL, the failures a player would meet, a data folder of its own with the compiler folder read only, and the game from a folder.
-What cannot be checked there, and has not been run: the Windows programs themselves, `CreateProcess` and the job object, the
-window, the file dialog, the console output of `--prepare`, loading the DLL, and the game.
+damaged DLL, the failures a player would meet, a data folder of its own with the compiler folder read only, and the game from a folder;
+and the pictures: made by the first start in the data folder (the achievement pictures pixel for pixel the Python script's, the icon file
+whole), made on their own with a current DLL, made again by a newer recipe, and a failure of them (a disc without the files, a tool that
+fails or is gone) that leaves the start as it was but for a line in the log. `tools/check_config_tool.sh` runs `--pictures` too, on the
+disc image. What cannot be checked there, and has not been run: the Windows programs themselves, `CreateProcess` and the job object, the
+window, the file dialog, the console output of `--prepare`, loading the DLL, loading `Buffy.ico` as the window's icon, and the game.
 
 ## Achievements
 
@@ -370,7 +388,7 @@ other settings, including pad scripts.
 | `sdk/xdk/4432/layout.toml` | This XDK's data layouts, each value with the instruction that proves it |
 | `src/` | The game's side of the port: the achievement list, the hooks, widescreen, the Extras additions |
 | `install.sh` | The installer: the steps under "Building it by hand", with checks |
-| `tools/` | `regen.sh`; `make_config.py` writes the recompiler's input, and `buffy_config/` (C++) does the same for the Windows first start, checked against it by `check_config_tool.sh`; `disasm.py` disassembles by name; `coverage.py` reports what the game calls in the libraries; `check_game_code_dll.sh` (with `library_calls.cpp`) and `sim_first_start.sh` (with `first_start_check.cpp`) check the Windows build, and `package_windows.sh` (with `audit_windows_package.py` and `windows_player_readme.txt`) assembles and audits its release (see "Cross-building for Windows" and "The Windows release") |
+| `tools/` | `regen.sh`; `make_config.py` writes the recompiler's input, and `buffy_config/` (C++) does the same for the Windows first start, checked against it by `check_config_tool.sh`, and also makes the achievement pictures and the icon from the disc (`--pictures`; `make_achievement_icons.py` and `make_icon.py` are the Mac's, and `compare_pngs.py` and `check_ico.py` check the C++ against them); `disasm.py` disassembles by name; `coverage.py` reports what the game calls in the libraries; `check_game_code_dll.sh` (with `library_calls.cpp`) and `sim_first_start.sh` (with `first_start_check.cpp`) check the Windows build, and `package_windows.sh` (with `audit_windows_package.py` and `windows_player_readme.txt`) assembles and audits its release (see "Cross-building for Windows" and "The Windows release") |
 | `docs/xdk-4432.md` | How this game differs from what the SDK expected, and the evidence |
 | `assets/`, `config/game.toml`, `generated/`, `build/` | Not in the repository: the game's files, what's derived from them, and build output |
 

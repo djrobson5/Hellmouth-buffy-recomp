@@ -4,6 +4,7 @@
 //
 //   buffy_config --map final.map --xbe Default.xbe [--names sdk_names.txt] [--out game.toml]
 //   buffy_config --scan-sdk <sdk folder> --out sdk_names.txt
+//   buffy_config --pictures <levelThumbnails.mtx> <launch_buffy.xpr> <out folder>
 //
 // The first writes the recompiler's input: what xbe_symbols does for a title with signatures, with real names. Only an exact API
 // name or an entry of kAliases binds. A loose match could replace an internal layer the library still needs
@@ -13,6 +14,8 @@
 //
 // sdk_names.txt is every guest name the runtime can bind: make_config.py found them in the sources of sdk/runtime when it ran, which
 // the player's PC has not got, so --scan-sdk finds them at build time and the file goes beside this program.
+//
+// --pictures is the third job: the achievement pictures and the game's icon, made from two files of the disc (pictures.cpp).
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -27,6 +30,8 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include "pictures.h"
 
 namespace fs = std::filesystem;
 
@@ -461,6 +466,7 @@ int Usage() {
     std::fprintf(stderr,
                  "usage: buffy_config --map final.map --xbe Default.xbe [--names sdk_names.txt] [--out game.toml]\n"
                  "       buffy_config --scan-sdk <sdk folder> --out sdk_names.txt\n"
+                 "       buffy_config --pictures <levelThumbnails.mtx> <launch_buffy.xpr> <out folder>\n"
                  "  --names defaults to sdk_names.txt beside this program, --out to config/game.toml (or sdk_names.txt)\n");
     return 2;
 }
@@ -470,6 +476,12 @@ int Usage() {
 int main(int argc, char** argv) {
     fs::path map = "assets/final.map", xbe = "assets/Default.xbe", names, out, scan;
     bool have_out = false;
+    if (argc == 5 && std::string(argv[1]) == "--pictures") {
+        std::string why;
+        if (!pictures::Make(argv[2], argv[3], argv[4], why)) Die(why);
+        std::printf("the achievement pictures and the icon are in %s\n", argv[4]);
+        return 0;
+    }
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto value = [&]() -> fs::path { return i + 1 < argc ? fs::path(argv[++i]) : (Usage(), std::exit(2), fs::path()); };

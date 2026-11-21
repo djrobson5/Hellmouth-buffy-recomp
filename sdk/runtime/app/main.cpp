@@ -511,6 +511,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     RegisterClassExW(&wc);
     app::g_hwnd = CreateWindowExW(0, wc.lpszClassName, app::kGame.title, WS_POPUP, 0, 0, 1280, 720,
                                   nullptr, nullptr, inst, nullptr);
+    app::SetWindowIcons(app::g_hwnd);  // the icon the first start made from the disc, if there is one
     // behind a splash the window stays hidden until the game's first frame; handed over, it is set up hidden
     if (handover) {
         app::ApplyNow();

@@ -29,6 +29,11 @@ inline std::string Narrow(const wchar_t* text) {
     return out;
 }
 
+// The version of the recipe for the achievement pictures and the icon the first start makes from the disc (tools/buffy_config/pictures.cpp,
+// the same picks as tools/make_achievement_icons.py). Raise it when a pick, a crop or the icon's design changes: the next start makes them
+// again, even with the game's code current.
+inline constexpr int kPicturesRecipe = 1;
+
 inline gamebuild::Recipe Recipe(size_t slots) {
     gamebuild::Recipe r;
     r.library = IMAGE_LIBRARY;
@@ -37,6 +42,7 @@ inline gamebuild::Recipe Recipe(size_t slots) {
     r.compile_flags = Narrow(XBE_GAME_CODE_COMPILE_FLAGS);
     r.link_flags = Narrow(XBE_GAME_CODE_LINK_FLAGS);
     r.slots = slots;
+    r.pictures = kPicturesRecipe;
     return r;
 }
 

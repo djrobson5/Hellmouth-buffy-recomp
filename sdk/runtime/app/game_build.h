@@ -7,6 +7,8 @@
 // What it runs, with <compiler> the folder of the tools beside the executable and <work> the work folder:
 //   buffy_config.exe   final.map + Default.xbe -> game.toml                           (the config the player's disc gives)
 //   xbe_recomp.exe     game.toml + Default.xbe -> C++ sources, exports.def, imports.def
+//   buffy_config.exe   --pictures: two of the disc's files -> the achievement pictures and the icon, in <data> (not part of the DLL:
+//                      made on their own marker, so that a start with a current DLL still makes them; see MakePictures)
 //   clang.exe          each source -> .obj, the biggest first, as many at once as the PC has room for
 //   lld-link.exe       the objects + <compiler>\<library>.lib (the executable's import library) -> <library>
 // then the DLL's stamp is read and must be the one the executable expects, and the DLL is moved into place.
@@ -49,6 +51,8 @@ struct Layout {
     fs::path Build() const { return data / "build"; }                  // the finished DLL
     fs::path Work() const { return data / "cache" / "game-code"; }     // sources and objects: about 300 MB, kept for a quicker rebuild
     fs::path Log() const { return logs / "compile.log"; }
+    fs::path PicturesScratch() const { return data / "cache" / "pictures"; }  // the two disc files while the pictures are made
+    fs::path PicturesMarker() const { return data / "pictures.stamp"; }       // written last: the pictures are made, by this recipe
     fs::path Tool(const char* name) const { return Compiler() / (std::string(name) + ".exe"); }
 };
 
@@ -60,9 +64,10 @@ struct Recipe {
     std::string compile_flags;  // for clang, space separated (game_code_flags.h)
     std::string link_flags;     // for lld-link
     size_t slots = 1;           // compiles at once
+    int pictures = 0;           // the version of the recipe for the pictures and the icon (game_code_recipe.h); 0 when the game has none
 };
 
-enum class Stage { Reading, Config, Translating, Planning, Compiling, Linking, Checking, Done };
+enum class Stage { Reading, Config, Translating, Pictures, Planning, Compiling, Linking, Checking, Done };
 
 // how far along the build is, written by the build and read by whatever shows it; changed (if set) is called after each change,
 // from the build's thread
@@ -87,6 +92,14 @@ struct Inputs {
 };
 using ReadInputs = std::function<bool(Inputs& inputs, std::string& why)>;
 
+// and what the pictures are made from (interfc/levelThumbnails.mtx and media/launch_buffy.xpr), read apart from the rest because a disc
+// that lacks them still builds the game: the pictures are made when the files are there, and are never what stops a start
+struct PictureInputs {
+    std::vector<uint8_t> thumbnails;  // interfc/levelThumbnails.mtx
+    std::vector<uint8_t> launch;      // media/launch_buffy.xpr
+};
+using ReadPictures = std::function<bool(PictureInputs& inputs, std::string& why)>;
+
 // where it went wrong, for the player and for the log
 struct Failure {
     std::string step;    // "Compiling x86_recomp.17.cpp"
@@ -100,10 +113,25 @@ enum class Outcome { Built, Failed, Cancelled };
 // What stops a build before it starts, for the player to fix; empty when nothing does: tools missing, no writing, no room.
 std::string Blocker(const Layout& layout, const Recipe& recipe);
 
+// The achievement pictures and the icon (<data>\achievements\<id>.png, <data>\Buffy.png and Buffy.ico) are made from the disc by
+// `buffy_config --pictures`. They have a marker of their own, <data>\pictures.stamp, which holds the recipe's version and is written when
+// all of it is there: a start whose DLL is current but whose pictures are not made (or were made by an older recipe) makes them, in the
+// build (after the translation) and on their own (EnsurePictures). A picture that cannot be made is never a failure: a line in the
+// log says why (and the next start tries again).
+bool PicturesCurrent(const Layout& layout, const Recipe& recipe);
+// makes them now, whatever the marker says; true when they were made. `read` is called for the disc's two files.
+bool MakePictures(const Layout& layout, const Recipe& recipe, const ReadPictures& read, Runner& run);
+// makes them when the marker says they are not there
+inline bool EnsurePictures(const Layout& layout, const Recipe& recipe, const ReadPictures& read, Runner& run) {
+    return PicturesCurrent(layout, recipe) || MakePictures(layout, recipe, read, run);
+}
+
 // Runs the build. Objects whose source, flags and compiler are what they were are reused, so a closed window or a failure
 // loses only the files in progress (the sources are made again each time and compared by content: the recompiler writes every
-// file). Writes <Build>\<library> and <Build>\<library>.stamp when it succeeds, and a line of each step and command to the log.
-Outcome Build(const Layout& layout, const Recipe& recipe, const ReadInputs& read, Runner& run, Progress& progress, Failure& failure);
+// file). Writes <Build>\<library> and <Build>\<library>.stamp when it succeeds, and a line of each step and command to the log. The pictures
+// are made after the translation if they are not there (`pictures` may be empty: none are made).
+Outcome Build(const Layout& layout, const Recipe& recipe, const ReadInputs& read, const ReadPictures& pictures, Runner& run, Progress& progress,
+              Failure& failure);
 
 // the DLL at <Build>\<library> against the stamp it must say
 enum class DllState { Missing, Current, Stale, Unreadable };

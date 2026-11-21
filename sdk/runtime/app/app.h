@@ -235,6 +235,8 @@ void PrintOut(const std::string& line);
 void PrintErr(const std::string& line);
 int Instance();  // Args().instance
 void* Window();  // HWND
+// Windows: the window's big and small icon from <data>\Buffy.ico, the one the first start made from the disc (window_icon.cpp); nothing if there is none
+void SetWindowIcons(void* window);
 void* MetalLayer();  // not Windows: the window's CAMetalLayer, null when the window has none (the renderer draws into it)
 extern std::atomic<uint32_t> g_pixel_height;  // not Windows: the window's height in the screen's own pixels, for the render scale
 // boot splash: GameInfo::splash .bmp or .png beside the exe, up before the game window

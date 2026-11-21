@@ -14,12 +14,13 @@ To play
    once, and again only after an update of this download. It needs about 1 GB of free space while it works. When it is done, choose Start
    (or press A on a controller). If you tick "Delete the build files", the working files (about 300 MB) are removed, and the
    next build after an update takes longer.
+   The same first start makes the achievement pictures and the game's icon from your disc (they are not part of this download).
 4. Next time Buffy.exe starts the game at once.
 
 Your saves, settings and logs
 -----------------------------
-They are beside Buffy.exe (hdd\, settings.toml, logs\, Screenshots\), unless you start it with --data "<folder>" to keep them
-elsewhere. To start again from the disc, delete the build folder (and cache\game-code).
+They are beside Buffy.exe (hdd\, settings.toml, logs\, Screenshots\, and achievements\ and Buffy.ico, the pictures made from your
+disc), unless you start it with --data "<folder>" to keep them elsewhere. To start again from the disc, delete the build folder (and cache\game-code).
 
 If something goes wrong
 -----------------------

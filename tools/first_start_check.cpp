@@ -5,10 +5,12 @@
 // tools/sim_first_start.sh builds it and drives it.
 //
 //   first_start_check --app <folder with compiler/> --data <data folder> --game <disc image or folder with Default.xbe>
-//       [--slots N] [--stop-after N] [--abi <token>] [--check] [--print-stamp]
+//       [--slots N] [--stop-after N] [--abi <token>] [--pictures N] [--check] [--print-stamp]
 //   --check        only say whether the DLL is current (exit 0 current, 1 not)
 //   --stop-after   cancel after N files are compiled (a closed window)
 //   --abi          pretend the executable has another ABI token (an update)
+//   --pictures     pretend the executable's recipe for the achievement pictures and the icon is version N (default: the real one, 1);
+//                  0 makes none. A start whose DLL is current makes them when they are not made, as the executable does.
 //   --print-stamp  print the stamp the executable expects, as built from the headers here, and exit
 // Prints what --prepare prints ("progress <0 to 1> <text>" lines) on stdout and "error: <step>: <reason>" on stderr.
 #include <fcntl.h>
@@ -37,10 +39,11 @@ namespace fs = std::filesystem;
 
 class PosixRunner : public gamebuild::Runner {
 public:
-    explicit PosixRunner(const fs::path& log) {
+    // append: the log is added to, as for a start that only makes the pictures
+    explicit PosixRunner(const fs::path& log, bool append = false) {
         std::error_code ec;
         fs::create_directories(log.parent_path(), ec);
-        fd_ = open(log.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_APPEND, 0644);
+        fd_ = open(log.c_str(), O_WRONLY | O_CREAT | (append ? 0 : O_TRUNC) | O_APPEND, 0644);
     }
     ~PosixRunner() override {
         KillAll();
@@ -141,6 +144,38 @@ bool ReadDisc(const fs::path& game, gamebuild::Inputs& in, std::string& why) {
     return true;
 }
 
+// the two disc files the pictures are made from (what app/game_code.cpp's ReadPictureFiles does): a disc, or a folder of extracted files
+bool ReadPictureFiles(const fs::path& game, gamebuild::PictureInputs& in, std::string& why) {
+    std::error_code ec;
+    std::unique_ptr<kernel::Disc> disc;
+    if (!fs::is_directory(game, ec)) {
+        disc = std::make_unique<kernel::Disc>();
+        if (!disc->Open(game, why)) return false;
+    }
+    struct File {
+        const char* disc_path;
+        const char* folder_path;
+        std::vector<uint8_t>& into;
+    };
+    for (const File& file : {File{"interfc\\levelThumbnails.mtx", "interfc/levelThumbnails.mtx", in.thumbnails},
+                             File{"media\\launch_buffy.xpr", "media/launch_buffy.xpr", in.launch}}) {
+        if (disc) {
+            if (!disc->Load(file.disc_path, file.into)) {
+                why = std::string("the disc image has no ") + file.disc_path;
+                return false;
+            }
+            continue;
+        }
+        std::ifstream f(game / file.folder_path, std::ios::binary);
+        if (!f) {
+            why = game.string() + " has no " + file.folder_path;
+            return false;
+        }
+        file.into.assign(std::istreambuf_iterator<char>(f), {});
+    }
+    return true;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -149,6 +184,7 @@ int main(int argc, char** argv) {
     long stop_after = -1;
     bool check_only = false, print_stamp = false;
     std::string abi;
+    int pictures = -1;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto next = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
@@ -158,6 +194,7 @@ int main(int argc, char** argv) {
         else if (a == "--slots") slots = size_t(std::atol(next().c_str()));
         else if (a == "--stop-after") stop_after = std::atol(next().c_str());
         else if (a == "--abi") abi = next();
+        else if (a == "--pictures") pictures = std::atoi(next().c_str());
         else if (a == "--check") check_only = true;
         else if (a == "--print-stamp") print_stamp = true;
     }
@@ -171,6 +208,8 @@ int main(int argc, char** argv) {
     }
     gamebuild::Layout layout{fs::absolute(app), fs::absolute(data), fs::absolute(data) / "logs"};
     gamebuild::Recipe recipe = gamecode::Recipe(slots);
+    if (pictures >= 0) recipe.pictures = pictures;
+    gamebuild::ReadPictures read_pictures = [&](gamebuild::PictureInputs& in, std::string& why) { return ReadPictureFiles(game, in, why); };
     if (!abi.empty()) {  // an update that changed the ABI: the stamp and the compile's token say so
         auto swap = [&](std::string& s) {
             size_t at = s.find(gamecode::AbiToken());
@@ -188,6 +227,14 @@ int main(int argc, char** argv) {
     const char* names[] = {"missing", "current", "stale", "unreadable"};
     std::printf("dll: %s (%s)\n", names[int(state)], found.c_str());
     if (state == gamebuild::DllState::Current) {
+        if (!check_only) {  // as the executable does: the DLL being current says nothing of the pictures
+            if (gamebuild::PicturesCurrent(layout, recipe)) {
+                std::printf("pictures: current\n");
+            } else {
+                PosixRunner runner(layout.Log(), true);
+                std::printf(gamebuild::MakePictures(layout, recipe, read_pictures, runner) ? "pictures: made\n" : "pictures: not made\n");
+            }
+        }
         std::printf("progress 1.000 The game's code is up to date\n");
         return 0;
     }
@@ -214,7 +261,7 @@ int main(int argc, char** argv) {
     };
     gamebuild::Failure failure;
     gamebuild::Outcome outcome = gamebuild::Build(
-        layout, recipe, [&](gamebuild::Inputs& in, std::string& why) { return ReadDisc(game, in, why); }, runner, progress, failure);
+        layout, recipe, [&](gamebuild::Inputs& in, std::string& why) { return ReadDisc(game, in, why); }, read_pictures, runner, progress, failure);
     if (outcome == gamebuild::Outcome::Built) {
         std::printf("progress 1.000 Done\n");
         return 0;
