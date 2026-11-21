@@ -26,6 +26,10 @@ if(NOT GAME_PARTITIONS)
     set(GAME_PARTITIONS 128)
 endif()
 
+# the program's own icon, shown by Explorer (an original design: tools/make_exe_icon.py). The icon of the game's window is another one, made
+# from the player's disc at the first start (Buffy.ico in the data folder), and set at run time.
+set(XBE_ICON ${CMAKE_CURRENT_SOURCE_DIR}/resources/exe_icon.ico)
+
 # target name = the program's name: the game restarts itself by it (Buffy.exe), xbe = assets/Default.xbe
 add_xbe_image(Buffy Default.xbe game.toml ${GAME_PARTITIONS} game)
 

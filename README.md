@@ -223,6 +223,12 @@ what stops a start: `logs\compile.log` gets a line (`pictures: not made: <reason
 written, and the next start tries again. The game finds the pictures in the data folder (`achievements.cpp`, after the folder beside the
 exe), and sets `Buffy.ico` on its window and the taskbar (`window_icon.cpp`; without it the window keeps the executable's icon).
 
+**The executable's own icon** (what Explorer shows for `Buffy.exe`, and the window's until `Buffy.ico` is there) is not made from the game: it is
+a plain letter H in white on dark purple, an original design drawn by `tools/make_exe_icon.py` into `resources/exe_icon.ico`, which is
+committed. The game sets it with the CMake variable `XBE_ICON` (root `CMakeLists.txt`), and `sdk/cmake/XbeRecomp.cmake` puts it in the
+`.rc` beside the manifest as resource 1 of the icon type (before this the executable had none: `LoadIconW(MAKEINTRESOURCEW(1))` found
+nothing). `llvm-readobj --coff-resources out/build/win-x64-mingw/Buffy.exe` lists it: ICON entries 1 to 4 (256, 48, 32, 16) and GROUP_ICON 1.
+
 Then the window offers Start (or A on a controller) and Exit, and to delete the work folder (about 300 MB; keeping it makes a later
 rebuild much quicker). Every program runs without a window, below normal priority, in a job object that ends them with the game; their
 output and a line for every command and its exit code go to `logs\compile.log`. A failure shows the step, what happened and what to
@@ -388,6 +394,7 @@ other settings, including pad scripts.
 | `sdk/xdk/4432/layout.toml` | This XDK's data layouts, each value with the instruction that proves it |
 | `src/` | The game's side of the port: the achievement list, the hooks, widescreen, the Extras additions |
 | `install.sh` | The installer: the steps under "Building it by hand", with checks |
+| `resources/` | `exe_icon.ico`: `Buffy.exe`'s own icon, drawn by `tools/make_exe_icon.py` |
 | `tools/` | `regen.sh`; `make_config.py` writes the recompiler's input, and `buffy_config/` (C++) does the same for the Windows first start, checked against it by `check_config_tool.sh`, and also makes the achievement pictures and the icon from the disc (`--pictures`; `make_achievement_icons.py` and `make_icon.py` are the Mac's, and `compare_pngs.py` and `check_ico.py` check the C++ against them); `disasm.py` disassembles by name; `coverage.py` reports what the game calls in the libraries; `check_game_code_dll.sh` (with `library_calls.cpp`) and `sim_first_start.sh` (with `first_start_check.cpp`) check the Windows build, and `package_windows.sh` (with `audit_windows_package.py` and `windows_player_readme.txt`) assembles and audits its release (see "Cross-building for Windows" and "The Windows release") |
 | `docs/xdk-4432.md` | How this game differs from what the SDK expected, and the evidence |
 | `assets/`, `config/game.toml`, `generated/`, `build/` | Not in the repository: the game's files, what's derived from them, and build output |

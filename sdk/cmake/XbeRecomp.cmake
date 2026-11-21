@@ -280,6 +280,12 @@ function(add_xbe_image target xbe config partitions game_dir)
     # UTF-8 paths, DPI awareness: runtime/app/app.manifest, as resource 1 of type 24 (RT_MANIFEST)
     set(XBE_RC ${CMAKE_CURRENT_BINARY_DIR}/${target}_manifest.rc)
     set(rc "1 24 \"${XBE_SDK_DIR}/runtime/app/app.manifest\"\n")
+    # XBE_ICON (an .ico, set by the game before add_xbe_image): the executable's own icon, resource 1 of the icon type, which Explorer
+    # shows and which the windows take by default (LoadIconW(MAKEINTRESOURCE(1))). Without it the executable has none.
+    if(XBE_ICON)
+        string(APPEND rc "1 ICON \"${XBE_ICON}\"\n")
+        set_property(SOURCE ${XBE_RC} APPEND PROPERTY OBJECT_DEPENDS ${XBE_ICON})
+    endif()
     # XBE_VERSION ("1.2.3") and XBE_PRODUCT, when the game sets them: the version Windows shows in the exe's
     # Properties, and GAME_VERSION for the code
     if(XBE_VERSION)

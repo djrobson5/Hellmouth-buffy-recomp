@@ -65,8 +65,16 @@ What this port changed:
     `XbeRecomp.cmake` computes the token (a SHA-1 of the flags and of the files that define the executable's ABI and replacements,
     listed in `game_code/abi_inputs.txt`) and `sdk/tools/recomp` writes the rest: `IMAGE_CODE_STAMP` in `image_symbols.h`, and the
     stamp in `x86_func_mapping.cpp` (compiled only for the DLL), which needs `-DXBE_GAME_CODE_ABI=<token>`.
+  - `sdk/runtime/app/game_build.cpp`/`.h`, `game_code.cpp`, `game_code_recipe.h`, `achievements.cpp`, `window_icon.cpp`, `app.h`, `main.cpp`:
+    the first start also makes a game's pictures from the player's disc (the SDK knows only a tool, a recipe version and two disc files): `MakePictures`
+    runs `buffy_config --pictures` over files it takes from the disc into `<data>`, behind a marker of its own (`<data>\pictures.stamp`, the
+    recipe's version, `kPicturesRecipe`), so a start with a current DLL makes them too (`EnsurePictures`, in a normal start and in `--prepare`).
+    A picture that cannot be made is a line in `logs\compile.log` and never a failure. `Icon()` looks in the data folder after the folder beside the
+    exe, and `app::SetWindowIcons` (Windows) sets `<data>\Buffy.ico` on the game window.
   - `sdk/tools/LLVM-LICENSE.txt`: the licence text for the clang and lld the first start runs.
   - `sdk/tools/tool.manifest`: the manifest the Windows command line tools carry (UTF-8 command line and file names, long paths).
+  - `sdk/cmake/XbeRecomp.cmake`: `XBE_ICON` (an .ico a game sets before `add_xbe_image`) is the executable's icon resource (ICON 1 beside the manifest); a
+    game that sets none has no icon, as before.
   - `sdk/cmake/XbeRecomp.cmake`: `XBE_GAME_CODE_DLL` leaves the generated sources out of the executable, gives it the import library, the
     delay loading and the module definition file, and adds the `game_code_dll` target, which builds the DLL with the first start's
     commands for checking. The flags are in one place, written to `game_code_flags.h` for the executable.
