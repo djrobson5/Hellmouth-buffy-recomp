@@ -134,6 +134,24 @@
         { "label": "On", "set": { "window/pause_unfocused": "true" } }
       ],
       "defaults": { "window/pause_unfocused": "false" }
+    },
+    {
+      "id": "achievement_notes", "label": "Achievement notes", "group": "Game",
+      "help": "A note in the corner of the screen when you earn an achievement.",
+      "choices": [
+        { "label": "On", "set": { "achievements/notify": "true" } },
+        { "label": "Off", "set": { "achievements/notify": "false" } }
+      ],
+      "defaults": { "achievements/notify": "true" }
+    },
+    {
+      "id": "mid_level_checkpoints", "label": "Mid-level checkpoints", "group": "Game",
+      "help": "When Buffy dies and you choose Resurrect, the game goes back to a point about a minute earlier instead of the start of the level. Saved games are not affected.",
+      "choices": [
+        { "label": "On", "set": { "gameplay/mid_level_checkpoints": "true" } },
+        { "label": "Off", "set": { "gameplay/mid_level_checkpoints": "false" } }
+      ],
+      "defaults": { "gameplay/mid_level_checkpoints": "true" }
     }
   ],
 

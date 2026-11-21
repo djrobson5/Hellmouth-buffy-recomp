@@ -60,6 +60,11 @@ cp "$SRC/llvm-project/libcxxabi/LICENSE.TXT" "$P/licenses/libcxxabi-LICENSE.txt"
 cp "$SRC/llvm-project/libunwind/LICENSE.TXT" "$P/licenses/libunwind-LICENSE.txt"
 cp "$SRC/mingw-w64/COPYING.MinGW-w64-runtime/COPYING.MinGW-w64-runtime.txt" "$P/licenses/mingw-w64-runtime-COPYING.txt"
 cp "$SRC/mingw-w64/COPYING.MinGW-w64/COPYING.MinGW-w64.txt" "$P/licenses/mingw-w64-COPYING.txt"
+# Zydis and Zycore are compiled into compiler/xbe_recomp.exe: their licences, from the sources the tools were built from
+Z=$T/_deps/zydis-src
+[ -f "$Z/LICENSE" ] && [ -f "$Z/dependencies/zycore/LICENSE" ] || { echo "no Zydis sources in $T/_deps (the build of the tools fetches them)"; exit 1; }
+cp "$Z/LICENSE" "$P/licenses/Zydis-LICENSE.txt"
+cp "$Z/dependencies/zycore/LICENSE" "$P/licenses/Zycore-LICENSE.txt"
 cp sdk/licenses/* "$P/licenses/"
 cp sdk/THIRD_PARTY.txt "$P/THIRD_PARTY.txt"
 cp LICENSE "$P/LICENSE"

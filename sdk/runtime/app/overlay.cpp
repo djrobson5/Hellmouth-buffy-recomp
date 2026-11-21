@@ -105,7 +105,7 @@ constexpr const char* kLive[] = {
     "graphics.smooth_2d", "graphics.colour_look", "graphics.look_strength", "graphics.brightness", "graphics.widescreen",
     "textures.replace", "textures.dump", "input.vibration", "input.stick_deadzone", "input.trigger_threshold", "window.pause_unfocused",
     "window.mute_unfocused", "window.background_input", "keyboard.mouse_aim", "keyboard.mouse_sensitivity",
-    "keyboard.mouse_invert_y", "keyboard.enabled", "keyboard.player"};
+    "keyboard.mouse_invert_y", "keyboard.enabled", "keyboard.player", "achievements.notify"};
 #else
 constexpr const char* kLive[] = {
     "display.show_fps", "display.vsync", "display.render_percent", "graphics.upscaler", "graphics.upscaler_quality", "graphics.anti_aliasing",
@@ -290,12 +290,14 @@ std::atomic<bool> g_ui_ready{false};
 void* (*g_ui_picture)(const std::filesystem::path& png) = nullptr;
 
 #ifndef _WIN32
-// A launcher offers the menu's settings, those the menu can't change as they're read as the game starts, and the keys
-// the menu lists. The rest of the file does nothing on this host, and renderer's other choice is the CPU's picture.
+// A launcher offers the menu's settings, those the menu can't change as they're read as the game starts, the game's own
+// options (GameInfo::options, on the game's page), and the keys the menu lists. The rest of the file does nothing on this host, and renderer's other choice is the CPU's picture.
 std::string LauncherFields(const cfg::Desc& d) {
     const std::string k = std::string(d.section) + "." + d.key;
     if (std::string(d.section) == "keyboard" && d.type == cfg::Type::String)
         return "\"page\": \"Keys\", \"advanced\": true";
+    for (const auto& o : kGame.options)
+        if (std::string(o.section) == d.section && std::string(o.key) == d.key) return std::string("\"page\": \"") + kPages[2] + "\"";
     if (!IsLive(d) && k != "display.mode" && k != "display.width" && k != "display.height") return {};
     return std::string("\"page\": \"") + kPages[PageOf(d)] + "\"";
 }
