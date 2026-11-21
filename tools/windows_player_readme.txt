@@ -24,6 +24,21 @@ Your saves, settings and logs
 They are beside Buffy.exe (hdd\, settings.toml, logs\, Screenshots\, and achievements\ and Buffy.ico, the pictures made from your
 disc), unless you start it with --data "<folder>" to keep them elsewhere. To start again from the disc, delete the build folder (and cache\game-code).
 
+Updating to a new version
+-------------------------
+Everything you keep is in this folder: hdd\ (your saves), achievements.txt (what you have earned), settings.toml and
+Screenshots\. Either way works:
+  - Unzip the new version, then copy hdd\, achievements.txt, settings.toml and Screenshots\ from this folder into the new one.
+  - Or copy everything inside the new version's folder into this one, replacing the files it asks about. Your saves and
+    settings stay.
+The first start after an update may build the game again, as on the first day. If you start the game with --data, your things
+are in that folder instead, and the new version only needs the same --data.
+
+Not on Windows yet
+------------------
+The Mac version also has 120 fps (F6) and mid-level checkpoints. They are coming to Windows; for now the game runs at its own
+frame rate, and the mid-level checkpoints setting does nothing here.
+
 If something goes wrong
 -----------------------
 The window or a message says what failed and where. Three things cause most trouble:
@@ -48,5 +63,5 @@ What is in this folder
                 two recompiler tools of this project. They run only from Buffy.exe and need no installation.
   licenses\     the licences of what is included. THIRD_PARTY.txt lists it; LICENSE is this project's (MIT).
 
-The recompilation is the work of the Hellmouth project (https://github.com/djrobson5/Hellmouth) and the XboxXBERecomp SDK it is based on.
+The recompilation is the work of the Hellmouth project (https://github.com/djrobson5/Hellmouth-buffy-recomp) and the XboxXBERecomp SDK it is based on.
 Buffy the Vampire Slayer is owned by its rights holders; this project is unofficial.

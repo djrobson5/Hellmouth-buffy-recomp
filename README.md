@@ -10,7 +10,7 @@ a Mac program, and the Xbox kernel and libraries are implemented on the Mac. It 
 > copy of the disc. A built copy contains the recompiled game, so there's no ready-made app to download, and please don't
 > share one. Hellmouth is an unofficial fan
 > project, and isn't affiliated with or endorsed by the owners of *Buffy the Vampire Slayer*, The Collective, Fox Interactive,
-> Electronic Arts, Microsoft or Apple. Please report problems [here](https://github.com/djrobson5/Hellmouth/issues), not to the
+> Electronic Arts, Microsoft or Apple. Please report problems [here](https://github.com/djrobson5/Hellmouth-buffy-recomp/issues), not to the
 > projects credited below.
 
 ## Screenshots
@@ -40,9 +40,10 @@ Not proven yet:
 - **Extras:** Level Select and the Hard arenas have been driven through their menus in the headless harness (see "Extras"), not played
   by hand, and the achievement rule for Level Select games has been seen working only on the records of a save.
 - **Other Macs:** it has been tested on one machine, an M5 Pro with 64 GB of memory on macOS 27.0.1.
-- **Windows:** the SDK underneath also targets Windows, and this port's code now compiles and links for it, and a release for it can
-  be assembled (see "Cross-building for Windows" and "The Windows release"), but that program, its first start and the programs
-  that run there have never been run: nothing in the build environment can run a Windows program.
+- **Windows:** a Windows release exists (see "Installing it on Windows"). It has been tested on one PC, a laptop with Windows 10
+  Home, an Intel CPU and an NVIDIA RTX 4050 laptop GPU: the first start built the game from the disc in a couple of minutes, the
+  game played, and achievements were earned. Other GPUs (AMD, Intel) are untested, and so is the D3D12 renderer. Missing there for
+  now, compared with the Mac: 120 fps (and F6) and mid-level checkpoints (the setting does nothing on Windows yet).
 
 Levels are very dark near the camera, with hard-edged shadows. That's the game's own lighting, and it matches footage of the
 game. The game's Brightness slider (Options, Display) lifts it.
@@ -58,7 +59,7 @@ game. The game's Brightness slider (Options, Display) lifts it.
 
 ## Installing it
 
-1. Download `Hellmouth-<version>.zip` from [Releases](https://github.com/djrobson5/Hellmouth/releases/latest) and unzip it.
+1. Download `Hellmouth-<version>.zip` from [Releases](https://github.com/djrobson5/Hellmouth-buffy-recomp/releases/latest) and unzip it.
 2. In Terminal, run the installer, with the path to your disc image (you can drag each file into the Terminal window):
 
    ```sh
@@ -69,11 +70,24 @@ The installer checks your Mac and your disc, offers to install any Homebrew pack
 builds the app, then puts it in `/Applications` as `Buffy.app`. Open it and choose your disc image when it asks. The first build
 needs a network connection. Installing again leaves your saves and settings alone.
 
+
+## Installing it on Windows
+
+You need Windows 10 or 11 (64 bit) and a disc image (.iso) of the USA release made from your own disc (not the European
+"Chaos Bleeds", a different game).
+
+1. Download `Hellmouth-<version>-windows-x64.zip` from [Releases](https://github.com/djrobson5/Hellmouth-buffy-recomp/releases/latest)
+   and unzip it to a short folder you can write to, such as `C:\Hellmouth`.
+2. Run `Buffy.exe`. Windows may say it "protected your PC", because the program isn't signed: choose More info, then Run anyway.
+3. Choose your disc image. The first start builds the game from it, which takes a few minutes, once. Then choose Start.
+
+`README.txt` in the folder has the rest: where saves are kept, updating to a new version, and what to do if something goes wrong.
+
 ## Building it by hand
 
 ```sh
 brew install cmake pkgconf ffmpeg sdl3 molten-vk vulkan-headers glslang
-git clone https://github.com/djrobson5/Hellmouth.git
+git clone https://github.com/djrobson5/Hellmouth-buffy-recomp.git
 cd Hellmouth
 
 tools/regen.sh "<path to image.iso>"
@@ -98,7 +112,7 @@ and the restart looks for that name beside the running executable. The window cl
 ### Cross-building for Windows
 
 It builds the Windows program on a Mac with [llvm-mingw](https://github.com/mstorsjo/llvm-mingw), using the `generated/game` that
-`tools/regen.sh` made, and the result has never been run. The program is in two parts. `Buffy.exe` holds the runtime and this port's
+`tools/regen.sh` made. The program is in two parts. `Buffy.exe` holds the runtime and this port's
 own code and none of the game's recompiled code. `Buffy.dll` holds the recompiled game, and the executable compiles it on the player's
 PC at the first start, from their own copy of the game (see "The Windows release"). The `game_code_dll` target builds the same DLL
 here, with the commands the player's PC will run, as a check; neither it nor anything that holds the game's code may be shared.
@@ -130,7 +144,7 @@ the SDK's functions the config binds by reading `sdk/runtime`, which the player'
 them at build time, with a program for the build machine (`XBE_HOST_TOOLS`, as the cross build asks), into `sdk_names.txt`. Both
 Windows programs are linked `-static` and import only system DLLs (UCRT and `kernel32`), so nothing is installed beside them, and
 carry a manifest (`sdk/tools/tool.manifest`) that makes their command lines UTF-8, for a folder with an accented name. That manifest
-and the Windows programs are untested: nothing here can run a Windows program.
+and the Windows programs are tested only by playing the release on a PC (see "Status").
 
 `XBE_USE_GENERATED` (set by the preset) builds from `generated/game` as it is, rather than running the recompiler, which would
 be a Windows program that can't run here. `XBE_GAME_CODE_DLL` (also set by it) builds the game's code as `Buffy.dll` and leaves
@@ -175,7 +189,7 @@ How the two parts meet, in the order a call takes:
 
 ### The Windows release
 
-What the Windows program does when it starts, and where it keeps things. (None of it has been run on Windows: see "Status".)
+What the Windows program does when it starts, and where it keeps things. (Tested on one PC: see "Status".)
 
 **The game.** `--game <disc image or folder>` names the copy of the game to run. Without it the program uses the disc image it
 remembers (`<data>\disc_image.txt`, written once a choice has been accepted), else what is in `assets\` beside it, else a file dialog
@@ -278,7 +292,7 @@ damaged DLL, the failures a player would meet, a data folder of its own with the
 and the pictures: made by the first start in the data folder (the achievement pictures pixel for pixel the Python script's, the icon file
 whole), made on their own with a current DLL, made again by a newer recipe, and a failure of them (a disc without the files, a tool that
 fails or is gone) that leaves the start as it was but for a line in the log. `tools/check_config_tool.sh` runs `--pictures` too, on the
-disc image. What cannot be checked there, and has not been run: the Windows programs themselves, `CreateProcess` and the job object, the
+disc image. What cannot be checked there, and is checked only by playing the release on a PC: the Windows programs themselves, `CreateProcess` and the job object, the
 window, the file dialog, the console output of `--prepare`, loading the DLL, loading `Buffy.ico` as the window's icon, and the game.
 
 ## Achievements
