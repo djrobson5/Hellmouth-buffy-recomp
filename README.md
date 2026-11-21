@@ -59,7 +59,7 @@ game. The game's Brightness slider (Options, Display) lifts it.
 
 ## Installing it
 
-1. Download `Hellmouth-<version>.zip` from [Releases](https://github.com/djrobson5/Hellmouth-buffy-recomp/releases/latest) and unzip it.
+1. Download `Hellmouth-<version>-macos-arm64.zip` from [Releases](https://github.com/djrobson5/Hellmouth-buffy-recomp/releases/latest) and unzip it. It unzips to a folder named `Hellmouth-<version>`.
 2. In Terminal, run the installer, with the path to your disc image (you can drag each file into the Terminal window):
 
    ```sh
