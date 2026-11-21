@@ -5,6 +5,16 @@
 #include <string>
 #include <vector>
 
+// The Mac host has options Windows has not (--game-code and the one-shot modes below). A build for a Mac uses their lists; defining
+// SUPERVISOR_ARGS_MAC_LISTS as 0 gives the lists as Windows builds them, so that tools/supervisor_args_check.cpp can test those on a Mac.
+#ifndef SUPERVISOR_ARGS_MAC_LISTS
+#ifdef __APPLE__
+#define SUPERVISOR_ARGS_MAC_LISTS 1
+#else
+#define SUPERVISOR_ARGS_MAC_LISTS 0
+#endif
+#endif
+
 namespace app {
 
 // the command line split as CommandLineToArgvW does: the program name by the simple rule (a quote switches, no escapes), the rest by the
@@ -50,15 +60,20 @@ inline std::vector<std::wstring> SplitCommandLine(const std::wstring& line) {
 // True for a normal play start under RecompLauncher: RECOMPLAUNCHER=1 (by_launcher), no marker of ours yet (already_supervised: this
 // is the game's own process, started by a supervisor), and none of the one-shot modes: --prepare, --relaunched (a restart for a
 // level), --version and --describe-settings (on a Mac also --check-game-code, --print-paths and --title-id, which end before there is a
-// game). The options are found as main.cpp's Args() finds them: "--name=value" counts as "--name", and the word after an option that
+// game, and --game-code takes a path). The options are found as main.cpp's Args() finds them: "--name=value" counts as "--name", and the word after an option that
 // takes a value is that value, not an option. argv is the program's, argv[0] the program (SplitCommandLine's result on Windows,
 // WidenArgv's on a Mac).
 inline bool ShouldSuperviseArgv(const std::vector<std::wstring>& argv, bool by_launcher, bool already_supervised) {
     if (!by_launcher || already_supervised) return false;
     static const wchar_t* const kTakesValue[] = {L"--game",   L"--config",         L"--textures", L"--log",     L"--saves",
-                                                  L"--data", L"--shader-cache", L"--screenshots", L"--instance"};
+                                                  L"--data", L"--shader-cache", L"--screenshots", L"--instance"
+#if SUPERVISOR_ARGS_MAC_LISTS
+                                                  ,
+                                                  L"--game-code"
+#endif
+    };
     static const wchar_t* const kOneShot[] = {L"--prepare", L"--relaunched", L"--version", L"--describe-settings"
-#ifdef __APPLE__
+#if SUPERVISOR_ARGS_MAC_LISTS
                                               ,
                                               L"--check-game-code", L"--print-paths", L"--title-id"
 #endif

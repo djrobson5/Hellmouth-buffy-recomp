@@ -20,6 +20,8 @@
 //
 // The keeper loads nothing (no SDL, no log of the game's, no window or Dock icon: it never touches AppKit). macOS only.
 #ifdef __APPLE__
+#include <cstddef>
+#include <cstdint>
 #include <optional>
 
 namespace keeper {
@@ -28,7 +30,13 @@ namespace keeper {
 inline constexpr const char* kEnv = "HELLMOUTH_SUPERVISED";
 // the game process's exit code when the keeper is gone
 inline constexpr int kExitKeeperGone = 86;
+// A request is a frame on the requests' pipe: three 32-bit words (kFrameMagic, the payload's length, the payload's FNV-1a checksum), then the
+// payload. A requester killed half way leaves a part of a frame, and what does not check out is skipped to the next whole one.
+inline constexpr uint32_t kFrameMagic = 0x5245504B;
+inline constexpr size_t kFrameHeader = 12;
 
+// SIGTERM, SIGINT and SIGHUP sent to the keeper go on to the game processes (the keeper itself waits for them to end), and a SIGCHLD that the
+// launcher ignores is not the keeper's.
 // The keeper's side. Starts exe with argv and envp (what the game process would get, the marker added) and serves it until none is left.
 // Returns the exit code to end with. nullopt: nothing could be started (no pipes, no child), and nothing has: the caller runs the game in
 // this process, as it would without a keeper. A few lines of what happens go to log_path (nothing when it is null or cannot be written).

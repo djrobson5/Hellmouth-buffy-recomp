@@ -3,6 +3,7 @@
 // start, and its setup, are the real ones (tools/recomplauncher.json.in). tools/sim_first_start.sh builds and runs it.
 //
 //   supervisor_args_check            prints each case that is wrong and "<n> cases"; exits 1 if any is wrong
+//   (built with -DSUPERVISOR_ARGS_MAC_LISTS=0 it runs the lists as a Windows build has them, which a Mac's compiler would not otherwise give)
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -78,6 +79,7 @@ int main() {
         std::vector<const char*> argv;
         bool launcher, marker, supervised;
         const char* why;
+        bool mac_list = false;  // the answer rests on what only the Mac's lists have: with the Windows lists it is the other one
     };
     const char* const app = "/Applications/Hellmouth.app/Contents/MacOS/Buffy";
     const std::vector<Argv> macs = {
@@ -93,23 +95,25 @@ int main() {
         {{app, "--relaunched"}, true, false, false, "mac: --relaunched"},
         {{app, "--version"}, true, false, false, "mac: --version"},
         {{app, "--describe-settings"}, true, false, false, "mac: --describe-settings"},
-        {{app, "--check-game-code"}, true, false, false, "mac: --check-game-code"},
-        {{app, "--print-paths", "--data", "/d"}, true, false, false, "mac: --print-paths"},
-        {{app, "--title-id"}, true, false, false, "mac: --title-id"},
+        {{app, "--check-game-code"}, true, false, false, "mac: --check-game-code", true},
+        {{app, "--print-paths", "--data", "/d"}, true, false, false, "mac: --print-paths", true},
+        {{app, "--title-id"}, true, false, false, "mac: --title-id", true},
         {{app, "--data", "--prepare"}, true, false, true, "mac: --prepare as the value of --data is a folder name"},
         {{app, "--game", "/x --prepare/y.iso"}, true, false, true, "mac: --prepare inside a path"},
         {{app, "--game", "--version"}, true, false, true, "mac: --version as the value of --game"},
         {{app, "--game-code", "/d/Buffy.dylib"}, true, false, true, "mac: --game-code with its value is a play start"},
+        {{app, "--game-code", "--prepare"}, true, false, true, "mac: --prepare as the value of --game-code is a path", true},
         {{app, "--instance", "2", "--data", "/d"}, true, false, true, "mac: a second copy"},
         {{app, "--prepared"}, true, false, true, "mac: another word that starts the same"},
     };
     for (const Argv& c : macs) {
         const bool got = app::ShouldSuperviseArgv(app::WidenArgv(int(c.argv.size()), const_cast<char* const*>(c.argv.data())), c.launcher, c.marker);
-        if (got != c.supervised) {
-            std::printf("WRONG: %s: supervised %d, expected %d\n", c.why, got, c.supervised);
+        const bool want = c.mac_list && !SUPERVISOR_ARGS_MAC_LISTS ? !c.supervised : c.supervised;
+        if (got != want) {
+            std::printf("WRONG: %s: supervised %d, expected %d\n", c.why, got, want);
             wrong++;
         }
     }
-    std::printf("%zu cases\n", cases.size() + splits.size() + macs.size());
+    std::printf("%zu cases%s\n", cases.size() + splits.size() + macs.size(), SUPERVISOR_ARGS_MAC_LISTS ? "" : ", with the lists as Windows builds them");
     return wrong ? 1 : 0;
 }

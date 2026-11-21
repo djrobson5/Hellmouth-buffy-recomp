@@ -249,7 +249,13 @@ void Relaunch(const char* exe) {
     }
     const bool kept = keeper::Active();
     int next = kept ? keeper::Spawn(path.c_str(), *_NSGetArgv(), *_NSGetEnviron()) : app::HandoverOpen(path);
-    if (kept && next < 0) LOGE("relaunch: the keeper cannot start %s: %s", path.c_str(), std::strerror(errno));
+    if (kept && next < 0) {
+        LOGE("relaunch: the keeper cannot start %s: %s", path.c_str(), std::strerror(errno));
+        if (errno == ETIMEDOUT) {  // the keeper is gone with the request unanswered: an instance may have been started, none is made here
+            logx::Flush();
+            std::_Exit(keeper::kExitKeeperGone);
+        }
+    }
     if (next < 0 && !kept) {
         posix_spawnattr_t attr;
         posix_spawnattr_init(&attr);

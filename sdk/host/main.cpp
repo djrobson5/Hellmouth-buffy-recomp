@@ -873,6 +873,8 @@ int PrintPaths() {
 
 namespace {
 
+bool g_unmanaged = false;  // Keep found HELLMOUTH_SUPERVISED and no keeper behind it: the log says so, once it exists
+
 // A start by RecompLauncher (RECOMPLAUNCHER=1, not one of the one-shot modes: app/supervisor_args.h) is run as the keeper's child
 // (kernel/keeper.h), which is what RecompLauncher's Stop ends, however many processes the game has gone through by then: the code is the
 // game's, this process only waits. The game's own process finds the keeper's pipes in the environment instead (Attach), and nothing here
@@ -882,6 +884,11 @@ std::optional<int> Keep() {
     using namespace app;
     const bool marked = std::getenv(keeper::kEnv) != nullptr;
     if (keeper::Attach()) return std::nullopt;
+    if (marked) {  // started as a keeper's game process, with nothing to attach to: it runs on its own, and says so
+        g_unmanaged = true;
+        static const char text[] = "keeper: the environment names no pipes of a keeper that are open here: running without one\n";
+        (void)!write(2, text, sizeof text - 1);
+    }
     if (std::getenv("XBE_RELAUNCHED")) return std::nullopt;
     const char* launcher = std::getenv("RECOMPLAUNCHER");
     int argc = *_NSGetArgc();
@@ -928,6 +935,7 @@ int main() {
     std::filesystem::create_directories(DataDir(), data_error);
     logx::Init(LogFolder().string(), LogName(), Args().relaunched);
     CloseLogOnCrash();
+    if (g_unmanaged) LOGW("keeper: HELLMOUTH_SUPERVISED named no keeper's pipes: running without one");
     if (data_error) LOGE("data folder %s could not be made: %s", DataDir().string().c_str(), data_error.message().c_str());
     if (Args().prepare) {
         // a launcher's setup: the game's code built, nothing started, no settings read (a settings file that is wrong is no reason for it

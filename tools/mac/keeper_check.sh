@@ -59,8 +59,10 @@ if [ -n "$B" ]; then
     [ "$code" = 0 ] && [ ! -e "$D/d-paths" ]; chk $? "--print-paths is not run under a keeper (and makes nothing)"
     run marked "$D/d-marked" RECOMPLAUNCHER=1 HELLMOUTH_SUPERVISED=40,41,42 -- --no-dialogs --data "$D/d-marked" --game "$D/nothing.iso"
     [ "$code" = 2 ] && [ ! -e "$D/d-marked/logs/supervisor.log" ]; chk $? "a stale marker in the environment is not trusted with descriptors, and no keeper is made inside it"
+    grep -q "running without one" "$D/marked.err" && grep -q "running without one" "$D/d-marked/logs/"buffy*.log; chk $? "and that it runs without a keeper is said, on stderr and in the game's log"
     left=$(ps -axo pid=,command= | grep -F "$EXE" | grep -v grep || true)
     [ -z "$left" ]; chk $? "no Buffy is left running${left:+: $left}"
+    [ -z "$left" ] || echo "$left" | awk '{print $1}' | xargs kill -9 2> /dev/null
     [ "$fail" = 0 ] || exit 1
     rm -rf "$D"
     exit 0
@@ -68,6 +70,8 @@ fi
 
 clang++ -std=c++20 -O1 -g -Wall -Wextra -I"$REPO/sdk/runtime" "$REPO/tools/supervisor_args_check.cpp" -o "$O/supervisor_args_check" || die "supervisor_args_check does not compile"
 "$O/supervisor_args_check" > "$O/sac.out" 2>&1; chk $? "which starts get a keeper (the Mac's argv too): $(tail -1 "$O/sac.out")"
+clang++ -std=c++20 -O1 -g -Wall -Wextra -DSUPERVISOR_ARGS_MAC_LISTS=0 -I"$REPO/sdk/runtime" "$REPO/tools/supervisor_args_check.cpp" -o "$O/supervisor_args_check_win" || die "supervisor_args_check (Windows lists) does not compile"
+"$O/supervisor_args_check_win" > "$O/sacw.out" 2>&1; chk $? "the same with the lists as Windows builds them: $(tail -1 "$O/sacw.out")"
 
 clang++ -std=c++20 -O1 -g -Wall -Wextra -I"$REPO/sdk/runtime" "$REPO/tools/mac/keeper_check.cpp" "$REPO/sdk/runtime/kernel/keeper.cpp" -o "$O/keeper_check" || die "keeper_check does not compile"
 perl -e 'alarm 280; exec @ARGV' "$O/keeper_check" "$O/scratch" > "$O/kc.out" 2>&1; code=$?
@@ -75,6 +79,7 @@ cat "$O/kc.out"
 [ "$code" = 0 ] && ! grep -q '^FAIL' "$O/kc.out" && grep -q 'checks passed, 0 failed' "$O/kc.out"; chk $? "the keeper's own checks ended with $code (142 is the alarm)"
 left=$(ps -axo pid=,command= | grep -F "$O/keeper_check" | grep -v grep || true)
 [ -z "$left" ]; chk $? "no stand-in or keeper is left running${left:+: $left}"
+[ -z "$left" ] || echo "$left" | awk '{print $1}' | xargs kill -9 2> /dev/null  # what a check left is not left to run on
 
 [ "$fail" = 0 ] || exit 1
 rm -rf "$O/scratch" "$O/home"

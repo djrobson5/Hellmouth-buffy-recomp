@@ -4,12 +4,14 @@
 
 #include <fcntl.h>
 #include <poll.h>
+#include <signal.h>
 #include <spawn.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
@@ -30,6 +32,10 @@ namespace {
 struct Pipes {
     int life_r = -1, life_w = -1, req_r = -1, req_w = -1, rep_r = -1, rep_w = -1;
 };
+
+// signals the keeper has caught and not yet passed on, one bit for each (signal numbers are below 32)
+std::atomic<unsigned> g_pending{0};
+void OnSignal(int sig) { g_pending.fetch_or(1u << sig); }
 
 // the game's own: which descriptors, and the value of kEnv they came from
 Pipes g_game;
@@ -154,8 +160,29 @@ uint32_t Get32(const std::string& s, size_t at) {
     return v;
 }
 
-// a request is a 32-bit length, then that many bytes: the id (32 bits), the number of arguments and of environment entries (32 bits
-// each), then the program, the arguments and the entries, each ended by a zero byte. False: it is not one.
+uint32_t Checksum(const char* p, size_t n) {  // FNV-1a
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < n; i++) h = (h ^ static_cast<unsigned char>(p[i])) * 16777619u;
+    return h;
+}
+
+constexpr size_t kMaxPayload = 4u << 20;
+enum class Frame { Bad, Short, Whole };
+
+// What is at `at` of the bytes read so far: a whole frame (its payload's length in `length`), the start of one that is not all here yet,
+// or nothing that is one (no magic, a length that cannot be, a checksum that is wrong).
+Frame FrameAt(const std::string& in, size_t at, uint32_t& length) {
+    if (in.size() < at + 4) return Frame::Short;
+    if (Get32(in, at) != kFrameMagic) return Frame::Bad;
+    if (in.size() < at + kFrameHeader) return Frame::Short;
+    length = Get32(in, at + 4);
+    if (length > kMaxPayload) return Frame::Bad;
+    if (in.size() < at + kFrameHeader + length) return Frame::Short;
+    return Checksum(in.data() + at + kFrameHeader, length) == Get32(in, at + 8) ? Frame::Whole : Frame::Bad;
+}
+
+// a request's payload (inside a frame, keeper.h): the id (32 bits), the number of arguments and of environment entries (32 bits each), then
+// the program, the arguments and the entries, each ended by a zero byte. False: it is not one.
 bool ParseRequest(const std::string& payload, uint32_t& id, std::string& path, std::vector<std::string>& argv, std::vector<std::string>& env) {
     if (payload.size() < 12) return false;
     id = Get32(payload, 0);
@@ -198,17 +225,62 @@ std::optional<int> Run(const char* exe, char* const* argv, char* const* envp, co
     }
     Note note(log_path);
     note("supervising process %ld", long(last));
+
+    // A launcher's ignored SIGCHLD survives exec, and children that are not waited for are then gone without a trace: ours is the default.
+    // SIGTERM, SIGINT and SIGHUP go on to every game process (they end themselves in order, cancelling what they run), and the keeper waits
+    // for them as for any end; SIGKILL cannot be caught, and the lifeline does what is needed. Left as they were when the keeper is done.
+    struct sigaction chld_old {}, old_handlers[3] {};
+    struct sigaction dfl {};
+    dfl.sa_handler = SIG_DFL;
+    sigemptyset(&dfl.sa_mask);
+    sigaction(SIGCHLD, &dfl, &chld_old);
+    struct sigaction catcher {};
+    catcher.sa_handler = OnSignal;  // no SA_RESTART: the wait below is cut short
+    sigemptyset(&catcher.sa_mask);
+    const int forwarded[3] = {SIGTERM, SIGINT, SIGHUP};
+    for (int i = 0; i < 3; i++) sigaction(forwarded[i], &catcher, &old_handlers[i]);
+    g_pending = 0;
+
     // The keeper keeps the game's three ends too: every later instance is started from here and is given them. Only the keeper holds the
     // lifeline's write end, and it never writes: it closes with this process, however that ends, which is what the game processes see.
     std::set<pid_t> live{last};
-    std::map<pid_t, int> ended;  // statuses of the children that have been reaped
+    std::map<pid_t, int> ended;  // statuses of the children that have been reaped (kLost: the kernel has no word of one that was not)
+    constexpr int kLost = INT32_MIN;
     auto reap = [&] {
         int status = 0;
-        for (pid_t r; (r = waitpid(-1, &status, WNOHANG)) > 0;) {
-            ended[r] = status;
-            live.erase(r);
-            note(WIFSIGNALED(status) ? "process %ld ended by a signal, code %ld" : "process %ld exited, code %ld", long(r), long(Decode(status)));
+        for (;;) {
+            const pid_t r = waitpid(-1, &status, WNOHANG);
+            if (r > 0) {
+                ended[r] = status;
+                live.erase(r);
+                note(WIFSIGNALED(status) ? "process %ld ended by a signal, code %ld" : "process %ld exited, code %ld", long(r), long(Decode(status)));
+            } else if (r < 0 && errno == ECHILD) {  // none that can be waited for: whatever is listed as living is over
+                for (pid_t pid : live) ended[pid] = kLost, note("process %ld is gone, its status is not known", long(pid));
+                live.clear();
+                break;
+            } else if (r < 0 && errno == EINTR) {
+                continue;
+            } else {
+                break;
+            }
         }
+        for (auto it = live.begin(); it != live.end();) {  // one the kernel no longer has (reaped by someone else)
+            if (kill(*it, 0) != 0 && errno == ESRCH) {
+                ended[*it] = kLost;
+                note("process %ld is gone, its status is not known", long(*it));
+                it = live.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    };
+    auto forward = [&] {
+        const unsigned pending = g_pending.exchange(0);
+        for (int i = 0; i < 3; i++)
+            if (pending & (1u << forwarded[i])) {
+                note("signal %ld goes on to the game", long(forwarded[i]));
+                for (pid_t pid : live) kill(pid, forwarded[i]);
+            }
     };
 
     std::string in;
@@ -216,29 +288,47 @@ std::optional<int> Run(const char* exe, char* const* argv, char* const* envp, co
     while (!live.empty()) {
         pollfd pf{p.req_r, POLLIN, 0};
         const int ready = poll(&pf, 1, 100);  // a short wait: a child that ends before it has shown anything is looked for by its pid
+        forward();
         reap();
         if (ready <= 0) continue;
         char buffer[65536];
         const ssize_t n = read(p.req_r, buffer, sizeof buffer);
         if (n > 0) in.append(buffer, size_t(n));
-        while (in.size() >= 4) {
-            const uint32_t length = Get32(in, 0);
-            if (length > (4u << 20)) {  // not a request: nothing after it can be trusted
-                in.clear();
-                break;
+        if (in.size() > 2 * kMaxPayload) in.clear();
+        for (;;) {
+            // A requester that is killed half way through leaves a part of a frame, which the next request would be taken for the rest of:
+            // what does not check out (magic, length, checksum) is skipped, to the next whole frame.
+            uint32_t length = 0;
+            Frame f = FrameAt(in, 0, length);
+            if (f != Frame::Whole) {
+                size_t at = std::string::npos;
+                for (size_t o = 1; o + kFrameHeader <= in.size() && at == std::string::npos; o++)
+                    if (FrameAt(in, o, length) == Frame::Whole) at = o;
+                if (at == std::string::npos && f == Frame::Short) break;  // the rest of it is yet to come
+                if (at == std::string::npos) {  // nothing here is a frame: on to what could start one
+                    at = in.size() > 3 ? in.size() - 3 : 0;
+                    for (size_t o = 1; o + 4 <= in.size(); o++)
+                        if (Get32(in, o) == kFrameMagic) {
+                            at = o;
+                            break;
+                        }
+                    if (at == 0) at = 1;
+                }
+                if (!in.empty()) note("%ld bytes of a request that was not whole are dropped", long(std::min(at, in.size())));
+                in.erase(0, std::min(at, in.size()));
+                if (in.empty()) break;
+                continue;
             }
-            if (in.size() < 4 + size_t(length)) break;
-            const std::string payload = in.substr(4, length);
-            in.erase(0, 4 + size_t(length));
+            const std::string payload = in.substr(kFrameHeader, length);
+            in.erase(0, kFrameHeader + length);
             uint32_t id = 0;
             std::string path;
             std::vector<std::string> child_args, child_env;
             struct {
                 uint32_t id;
                 int32_t pid;
-            } reply = {0, -EINVAL};
+            } reply = {payload.size() >= 4 ? Get32(payload, 0) : 0, -EINVAL};  // answered, if only to say no, so that nobody waits for it
             if (ParseRequest(payload, id, path, child_args, child_env)) {
-                reply.id = id;
                 pid_t pid = 0;
                 if (const int failed = StartChild(p, path.c_str(), child_args, child_env, pid)) {
                     note("cannot start a game process, error %ld", failed);
@@ -249,12 +339,17 @@ std::optional<int> Run(const char* exe, char* const* argv, char* const* envp, co
                     reply.pid = int32_t(pid);
                     note("process %ld started, for a level", long(pid));
                 }
+            } else {
+                note("a request that makes no sense is refused");
             }
             WriteAll(p.rep_w, &reply, sizeof reply);
         }
     }
 
-    const int code = ended.count(last) ? Decode(ended[last]) : 1;
+    for (int i = 0; i < 3; i++) sigaction(forwarded[i], &old_handlers[i], nullptr);
+    sigaction(SIGCHLD, &chld_old, nullptr);
+    const auto last_status = ended.find(last);
+    const int code = last_status == ended.end() || last_status->second == kLost ? 1 : Decode(last_status->second);
     note("done, exit code %ld", long(code));
     for (int* fd : {&p.life_r, &p.life_w, &p.req_r, &p.req_w, &p.rep_r, &p.rep_w}) CloseFd(*fd);
     return code;
@@ -283,17 +378,30 @@ bool Attach() {
         if (fcntl(int(fd), F_GETFD) == -1 || fstat(int(fd), &st) != 0 || !S_ISFIFO(st.st_mode)) return false;
     }
     g_game.life_r = int(fds[0]), g_game.req_w = int(fds[1]), g_game.rep_r = int(fds[2]);
-    // not inherited by what this process starts (compilers at the first start): a process holding the write end of the requests would keep
-    // the keeper waiting after the game has gone. Spawn passes them to the next instance alone.
+    // Not inherited by what this process starts (compilers at the first start): those are not game processes of the keeper, and holding
+    // its pipes (or writing to them, a request or the lifeline's descriptor number reused) after the game has gone is not for them.
+    // Spawn passes the pipes to the next instance alone.
     for (int fd : {g_game.life_r, g_game.req_w, g_game.rep_r}) fcntl(fd, F_SETFD, FD_CLOEXEC);
     fcntl(g_game.req_w, F_SETNOSIGPIPE, 1);
     g_marker = marker;
     g_active = true;
-    std::thread([fd = g_game.life_r] {
+    struct stat life {};
+    fstat(g_game.life_r, &life);
+    std::thread([fd = g_game.life_r, dev = life.st_dev, ino = life.st_ino] {
         char byte;
         for (;;) {
             const ssize_t n = read(fd, &byte, 1);
-            if (n == 0) _exit(kExitKeeperGone);
+            if (n == 0) {
+                // end of file is the keeper gone, if this is still the pipe it was: a descriptor number the process closed and was given
+                // again (the read cut short, then the number used for another file) is not to end the game
+                struct stat now {};
+                if (fstat(fd, &now) != 0 || !S_ISFIFO(now.st_mode) || now.st_dev != dev || now.st_ino != ino) {
+                    static const char text[] = "keeper: the lifeline's descriptor is not the pipe it was, no longer watched\n";
+                    (void)!write(2, text, sizeof text - 1);
+                    return;
+                }
+                _exit(kExitKeeperGone);
+            }
             if (n < 0 && errno != EINTR) return;  // not a pipe that can be watched: the game goes on
         }
     }).detach();
@@ -313,7 +421,8 @@ int Spawn(const char* path, char* const* argv, char* const* envp) {
     uint32_t argc = 0, envc = 0;
     for (char* const* a = argv; a && *a; a++) argc++;
     for (char* const* e = envp; e && *e; e++) envc++;
-    const uint32_t id = (uint32_t(getpid()) << 8) ^ ++counter;
+    // never the same twice, not even by a process that has replaced itself (exec starts the counter again, the clock goes on)
+    const uint32_t id = uint32_t(clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000) * 2654435761u ^ (uint32_t(getpid()) << 8) ^ ++counter;
     std::string payload(12, '\0');
     std::memcpy(&payload[0], &id, 4);
     std::memcpy(&payload[4], &argc, 4);
@@ -321,23 +430,27 @@ int Spawn(const char* path, char* const* argv, char* const* envp) {
     payload.append(path).push_back('\0');
     for (char* const* a = argv; a && *a; a++) payload.append(*a).push_back('\0');
     for (char* const* e = envp; e && *e; e++) payload.append(*e).push_back('\0');
-    const uint32_t length = uint32_t(payload.size());
-    std::string message(4, '\0');
-    std::memcpy(&message[0], &length, 4);
+    const uint32_t header[3] = {kFrameMagic, uint32_t(payload.size()), Checksum(payload.data(), payload.size())};
+    std::string message(reinterpret_cast<const char*>(header), sizeof header);
     message += payload;
     if (!WriteAll(g_game.req_w, message.data(), message.size())) {
         errno = EPIPE;
         return -1;
     }
-    // the answer to this request (one an earlier request left unread, when it gave up, is passed over)
+    // The answer to this request (one an earlier request left unread is passed over). Once the request is sent, the keeper may have started
+    // the next instance: giving up while it lives could leave two, so this waits as long as it does (a keeper that has gone is the parent no
+    // more, and the lifeline ends this process anyway).
     for (;;) {
         struct {
             uint32_t id;
             int32_t pid;
         } reply;
         if (!ReadAll(g_game.rep_r, &reply, sizeof reply, 15000)) {
-            errno = ETIMEDOUT;
-            return -1;
+            if (getppid() == 1) {
+                errno = ETIMEDOUT;
+                return -1;
+            }
+            continue;
         }
         if (reply.id != id) continue;
         if (reply.pid > 0) return reply.pid;
