@@ -71,31 +71,6 @@ trap cleanup EXIT
 
 sha256() { shasum -a 256 "$1" | cut -d' ' -f1; }
 
-# gate <name> <log> <command>: runs the command (bash -e) with its output in <log>; returns its exit status
-gate_run() {
-    local rc=0
-    bash -ec "$3" > "$2" 2>&1 || rc=$?
-    return $rc
-}
-gate_fail() { # <name> <log> [why]
-    echo "FAIL $1${3:+: $3}"
-    echo "--- last lines of $2:"; tail -n 15 "$2" | sed 's/^/    /'
-    die "gate \"$1\" failed: stopping. The whole log is $2"
-}
-# a gate with a command only: OK <label> or stop
-gate_simple() { # <name> <ok label> <log> <command>
-    gate_run "$1" "$3" "$4" || gate_fail "$1" "$3"
-    echo "OK $2"
-}
-# a gate that prints PASS and FAIL lines, and exits non-zero on a FAIL: "<prefix>: N PASS, M FAIL"
-gate_counts() { # <name> <prefix> <log> <command>
-    local rc=0 pass fail
-    gate_run "$1" "$3" "$4" || rc=$?
-    pass=$(grep -c '^PASS' "$3" || true); fail=$(grep -c '^FAIL' "$3" || true)
-    echo "$2: $pass PASS, $fail FAIL"
-    [ "$rc" = 0 ] && [ "$fail" = 0 ] && [ "$pass" -gt 0 ] || gate_fail "$1" "$3" "exit status $rc, $pass PASS, $fail FAIL"
-}
-
 check_preconditions() {
     # 1a. a clean tree: nothing staged, changed or untracked (ignored files do not count)
     local dirty
@@ -149,27 +124,9 @@ check_preconditions() {
 
 run_gates() {
     local L=$1
-    gate_simple "win build" "win build" "$L/win-build.log" \
-        'cmake --preset win-x64-mingw && cmake --build out/build/win-x64-mingw && cmake --build out/build/win-x64-mingw --target game_code_dll'
-    gate_simple "tools build" "tools build" "$L/tools-build.log" \
-        '( cd tools && cmake --preset win-x64-mingw && cmake --build ../out/build/win-x64-mingw-tools )'
-    gate_counts "check_game_code_dll" "dll" "$L/check-dll.log" 'bash tools/check_game_code_dll.sh'
-    gate_counts "check_config_tool" "cfg" "$L/check-config.log" 'bash tools/check_config_tool.sh'
-    # package: the exit status, and what it says about the file RecompLauncher reads and the audits of the folder and of the zip
-    local rc=0 rl au
-    gate_run "package_windows" "$L/package.log" 'bash tools/package_windows.sh' || rc=$?
-    rl=$(grep -c 'RECOMPLAUNCHER.JSON PASSED' "$L/package.log" || true)
-    au=$(grep -c 'AUDIT PASSED' "$L/package.log" || true)
-    echo "package: $rl RECOMPLAUNCHER.JSON PASSED, $au AUDIT PASSED"
-    [ "$rc" = 0 ] && [ "$rl" -ge 1 ] && [ "$au" = 2 ] && ! grep -qi 'not checked' "$L/package.log" && ! grep -q 'AUDIT FAILED' "$L/package.log" &&
-        [ -f "$WZIP" ] || gate_fail "package_windows" "$L/package.log" "exit status $rc; needs RECOMPLAUNCHER.JSON PASSED, 2 AUDIT PASSED, no \"NOT checked\", and $WZIP"
-    # sim_first_start.sh plays the last of ls out/Hellmouth-*-windows-x64.zip: ours must be that one (0.2.9 sorts after 0.2.10)
-    local played
-    played=$(ls out/Hellmouth-*-windows-x64.zip | tail -1)
-    [ "$played" = "out/$WNAME" ] || die "tools/sim_first_start.sh would play $played, not out/$WNAME: move the other zips out of out/ first"
-    gate_counts "sim_first_start" "sim" "$L/sim.log" 'bash tools/sim_first_start.sh'
-    gate_simple "mac build" "mac build" "$L/mac-build.log" 'sdk/host/build.sh -r . -g generated/game -o build/app -n Buffy'
-    [ -x build/app/Buffy ] || gate_fail "mac build" "$L/mac-build.log" "build/app/Buffy was not made"
+    # the same checks as after any change (tools/gates.sh), plus the Windows zip this release uploads
+    bash tools/gates.sh --logs "$L" || die "a gate failed (above); logs in $L"
+    [ -f "$WZIP" ] || die "tools/package_windows.sh did not make $WZIP"
 }
 
 make_mac_zip() {

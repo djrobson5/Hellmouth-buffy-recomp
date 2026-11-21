@@ -26,8 +26,9 @@
     tools/release.sh notes.md               # the same, then a draft release (only the owners see it)
     tools/release.sh --publish notes.md     # a published release, marked as the latest
 
-The gates take several minutes (two cross builds, the checks, the packaging and the audit of the Windows release, the simulated first
-start, the Mac build). Their logs are in `out/release-X.Y.Z/`, and so are the filled in notes (`notes.md`). The Windows zip is
+The gates are `tools/gates.sh`, the same checks as after any change, and take several minutes (two cross builds, the checks, the
+packaging and the audit of the Windows release, the simulated first start, the Mac builds; with `MAC_DEPS` set, also the Mac build
+against the source-built libraries). Their logs are in `out/release-X.Y.Z/`, and so are the filled in notes (`notes.md`). The Windows zip is
 `out/Hellmouth-X.Y.Z-windows-x64.zip` and the Mac one `out/Hellmouth-X.Y.Z-macos-arm64.zip` (a `git archive` of HEAD, checked for
 game data and for anything that names the machine).
 
