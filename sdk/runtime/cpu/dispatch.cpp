@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <unordered_set>
 #include <vector>
@@ -69,23 +70,32 @@ namespace dispatch {
 // the game code DLL: its tables come by name, as the delay loaded imports carry only functions. The DLL's imports name the
 // executable (Buffy.exe), so Windows can only bind them when the running executable has that name: LoadLibraryW then fails with
 // "the specified module could not be found", which tells the player nothing, so the name is checked first.
-LoadResult Load(const std::filesystem::path& dll, const std::wstring& exe_name) {
+LoadResult Load(const std::filesystem::path& dll, const std::wstring& exe_name, const char* stamp) {
     wchar_t self[32768];
     DWORD n = GetModuleFileNameW(nullptr, self, DWORD(sizeof(self) / sizeof(self[0])));
     std::wstring running = std::filesystem::path(std::wstring(self, n)).filename().wstring();
-    if (_wcsicmp(running.c_str(), exe_name.c_str()) != 0) return {LoadStatus::WrongExeName, 0};
+    if (_wcsicmp(running.c_str(), exe_name.c_str()) != 0) return {LoadStatus::WrongExeName, 0, ""};
     HMODULE m = LoadLibraryW(dll.c_str());
-    if (!m) return {LoadStatus::NotLoaded, GetLastError()};
+    if (!m) {
+        DWORD error = GetLastError();
+        // the loader binds the DLL's imports by name before anything of the DLL runs: one this executable lacks is a DLL for
+        // another version of it
+        return {error == ERROR_PROC_NOT_FOUND ? LoadStatus::Stale : LoadStatus::NotLoaded, error, ""};
+    }
     g_mappings = reinterpret_cast<const X86FuncMapping*>(GetProcAddress(m, "X86FuncMappings"));
     g_continuations = reinterpret_cast<const uint32_t*>(GetProcAddress(m, "X86Continuations"));
     auto* lo = reinterpret_cast<const uint32_t*>(GetProcAddress(m, "X86CodeBase"));
     auto* hi = reinterpret_cast<const uint32_t*>(GetProcAddress(m, "X86CodeEnd"));
     auto* entry = reinterpret_cast<const uint32_t*>(GetProcAddress(m, "X86EntryPoint"));
-    if (!g_mappings || !g_continuations || !lo || !hi || !entry) return {LoadStatus::NoTables, 0};
+    if (!g_mappings || !g_continuations || !lo || !hi || !entry) return {LoadStatus::NoTables, 0, ""};
+    // the DLL binds to this executable by names, so one built for an older executable (or another copy of the game) loads
+    // happily and then calls the wrong code: it says what it was built for, and it must say what this executable is
+    const char* dll_stamp = reinterpret_cast<const char*>(GetProcAddress(m, "X86GameCodeStamp"));
+    if (!dll_stamp || std::strcmp(dll_stamp, stamp) != 0) return {LoadStatus::Stale, 0, dll_stamp ? dll_stamp : ""};
     g_lo = *lo;
     g_hi = *hi;
     g_entry = *entry;
-    return {LoadStatus::Ok, 0};
+    return {LoadStatus::Ok, 0, ""};
 }
 #endif
 

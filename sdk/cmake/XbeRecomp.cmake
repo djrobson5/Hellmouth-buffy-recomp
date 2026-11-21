@@ -111,7 +111,7 @@ set_source_files_properties(${XBE_SDK_DIR}/runtime/gpu/spirv.cpp PROPERTIES INCL
 # it holds only the recompiled code: it imports the runtime and its overrides from the executable, which exports them
 # (X86_HOST_API and X86_FUNC in cpu/x86_ops.h, host_exports.def.in), and the executable imports its recompiled functions
 # from the DLL by the names of imports.def, delay loaded.
-function(xbe_game_code_dll target GEN GEN_SOURCES CONFIG_FILE)
+function(xbe_game_code_dll target GEN GEN_SOURCES CONFIG_FILE GAME_DIR)
     # the DLL's name is the one the executable delay loads and imports.def names: the config's [xbe] library must be <target>.dll
     # (the executable's name is <target>.exe, and the DLL's imports name it). A config that is not there yet (build.bat writes it
     # at the first build) is not checked.
@@ -139,10 +139,46 @@ function(xbe_game_code_dll target GEN GEN_SOURCES CONFIG_FILE)
     find_program(XBE_CLANG clang HINTS ${llvm_bin} REQUIRED NO_DEFAULT_PATH)
     find_program(XBE_LLD_LINK lld-link HINTS ${llvm_bin} REQUIRED NO_DEFAULT_PATH)
 
+    # The ABI stamp: ties a game code DLL to the executable it was built for. The DLL binds to the executable by names, so one made
+    # for another version would load and call the wrong code. The token is a hash of what makes a DLL fit this executable: the
+    # headers the code is compiled against (the runtime's ABI and the stand-ins for the C++ library), the compile and link flags,
+    # the recompiler (what code it writes), the module definition file, and the sources that define the functions the executable
+    # replaces and so exports (runtime/xdk and src/<game_dir>: whole folders, so that a replacement added anywhere in them is
+    # counted; check_game_code_dll.sh fails if the executable exports one from anywhere else). It goes to the DLL in its compile
+    # (-DXBE_GAME_CODE_ABI=<token>), which stores it in the DLL's X86GameCodeStamp beside the image and names it was made from, and into
+    # the executable (game_code_flags.h, for game_code.cpp), which compares the two before it uses the DLL. A change to any of these
+    # files gives the DLL a new compile: this errs towards compiling again. Written to game_code/abi_inputs.txt.
+    file(GLOB freestanding CONFIGURE_DEPENDS ${XBE_SDK_DIR}/runtime/cpu/freestanding/*)
+    set(headers ${XBE_SDK_DIR}/runtime/cpu/x86_ops.h ${XBE_SDK_DIR}/runtime/cpu/x86_context.h)
+    set(override_dirs ${XBE_SDK_DIR}/runtime/xdk ${CMAKE_CURRENT_SOURCE_DIR}/src/${GAME_DIR})
+    file(GLOB_RECURSE override_files CONFIGURE_DEPENDS ${XBE_SDK_DIR}/runtime/xdk/* ${CMAKE_CURRENT_SOURCE_DIR}/src/${GAME_DIR}/*)
+    file(GLOB recomp_files CONFIGURE_DEPENDS ${XBE_SDK_DIR}/tools/recomp/*.cpp ${XBE_SDK_DIR}/tools/recomp/*.h)
+    set(abi_files ${headers} ${freestanding} ${XBE_SDK_DIR}/runtime/cpu/host_exports.def.in ${override_files} ${recomp_files})
+    list(REMOVE_DUPLICATES abi_files)
+    list(SORT abi_files)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${abi_files})
+
     # the flags of the first start (and of game_code_flags.h): one place
     set(compile_flags "-target x86_64-w64-mingw32 -std=c++20 -O2 -march=x86-64-v2 -fno-strict-aliasing -fms-extensions -nostdinc -nostdinc++ -w -DNDEBUG -DX86_GAME_CODE")
     set(link_flags "/dll /noentry /nodefaultlib /machine:x64 /opt:noicf")
-    set(game_code_flags "// written by CMake (xbe_game_code_dll): the flags that compile and link the game code DLL\n#pragma once\n#define XBE_GAME_CODE_COMPILE_FLAGS L\"${compile_flags}\"\n#define XBE_GAME_CODE_LINK_FLAGS L\"${link_flags}\"\n")
+    set(abi_text "xbe-game-code-abi 1\ncompile ${compile_flags}\nlink ${link_flags}\n")
+    foreach(f ${abi_files})
+        file(SHA1 ${f} f_sha1)
+        file(RELATIVE_PATH f_rel ${CMAKE_CURRENT_SOURCE_DIR} ${f})
+        string(APPEND abi_text "${f_sha1} ${f_rel}\n")
+    endforeach()
+    string(SHA1 abi_sha1 "${abi_text}")
+    string(SUBSTRING ${abi_sha1} 0 32 abi_hex)
+    set(abi_token abi${abi_hex})   # a bare token, so that no quote passes through a shell or a command line
+    set(abi_dirs)
+    foreach(d ${override_dirs})
+        file(RELATIVE_PATH d_rel ${CMAKE_CURRENT_SOURCE_DIR} ${d})
+        string(APPEND abi_dirs "override-dir ${d_rel}\n")
+    endforeach()
+    file(WRITE ${CODE}/abi_inputs.txt "token ${abi_token}\n${abi_dirs}${abi_text}")
+    # the compile gets the token; the hash above does not include it
+    string(APPEND compile_flags " -DXBE_GAME_CODE_ABI=${abi_token}")
+    set(game_code_flags "// written by CMake (xbe_game_code_dll): the flags that compile and link the game code DLL, and its ABI token\n#pragma once\n#define XBE_GAME_CODE_ABI ${abi_token}\n#define XBE_GAME_CODE_COMPILE_FLAGS L\"${compile_flags}\"\n#define XBE_GAME_CODE_LINK_FLAGS L\"${link_flags}\"\n")
     file(CONFIGURE OUTPUT ${CODE}/game_code_flags.h CONTENT "${game_code_flags}" @ONLY)
     separate_arguments(compile_args UNIX_COMMAND "${compile_flags}")
     separate_arguments(link_args UNIX_COMMAND "${link_flags}")
@@ -174,8 +210,6 @@ function(xbe_game_code_dll target GEN GEN_SOURCES CONFIG_FILE)
     set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS ${CODE}/code.lib ${CODE}/host_exports.def)
 
     # the headers the generated code includes, where the first start finds them: <include>/cpu, <include>/freestanding
-    file(GLOB freestanding CONFIGURE_DEPENDS ${XBE_SDK_DIR}/runtime/cpu/freestanding/*)
-    set(headers ${XBE_SDK_DIR}/runtime/cpu/x86_ops.h ${XBE_SDK_DIR}/runtime/cpu/x86_context.h)
     add_custom_command(
         OUTPUT ${CODE}/include.stamp
         COMMAND ${CMAKE_COMMAND} -E make_directory ${CODE}/include/cpu ${CODE}/include/freestanding
@@ -307,6 +341,6 @@ target_link_libraries(${target} PRIVATE tomlplusplus::tomlplusplus $<LINK_ONLY:S
         message(STATUS "${target}: PGO with ${pgo_profile}")
     endif()
     if(XBE_GAME_CODE_DLL)
-        xbe_game_code_dll(${target} ${GEN} "${GEN_SOURCES}" ${CMAKE_CURRENT_SOURCE_DIR}/config/${config})
+        xbe_game_code_dll(${target} ${GEN} "${GEN_SOURCES}" ${CMAKE_CURRENT_SOURCE_DIR}/config/${config} ${game_dir})
     endif()
 endfunction()

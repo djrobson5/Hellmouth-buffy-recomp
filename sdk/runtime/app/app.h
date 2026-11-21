@@ -155,6 +155,7 @@ enum ExitCode : int {
     kExitBadSettings = 5,   // the settings file is not readable
     kExitGpuLost = 6,       // the graphics driver stopped or reset while playing (Windows' GPU timeout, a driver crash)
     kExitNoGameCode = 7,    // the recompiled game code (the DLL beside the executable) is missing or will not load
+    kExitStaleGameCode = 8, // the DLL is there but was built for another version of this executable or of the game
 };
 // logs the reason, shows it unless --no-dialogs, and ends the process with code
 [[noreturn]] void Fail(int code, const std::wstring& message);

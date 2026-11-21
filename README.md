@@ -132,6 +132,23 @@ How the two parts meet, in the order a call takes:
   the executable by its full path before the first call, and finds the tables (`X86FuncMappings` and the rest) with `GetProcAddress`.
   The DLL's imports name `Buffy.exe`, so the program has to keep that name: `dispatch::Load` checks it first and says so, as Windows' own
   message for a program with another name would only say a module could not be found.
+- The DLL binds to the executable by names, so one made for another version of it would load and then call the wrong code. Each DLL
+  carries a stamp, `X86GameCodeStamp`: `xbe-game-code abi=<token> image=<hash> symbols=<hash>`. `PrepareGameCode` compares it with the
+  text the executable expects (a string in `Buffy.exe`) and refuses a DLL that says anything else, or nothing (exit code 8), as it
+  does one that Windows cannot bind because it wants an export this executable lacks. It is computed as follows:
+  - `abi=` is `abi` and 32 hex digits of a SHA-1 that CMake computes when it configures, over the compile and link flags and the
+    contents of: `cpu/x86_ops.h`, `cpu/x86_context.h`, the `cpu/freestanding` headers, `host_exports.def.in`, the recompiler's
+    sources (`sdk/tools/recomp`) and every file in `sdk/runtime/xdk` and `src/game`, the folders that define the functions the
+    executable replaces and so exports. That is what the generated code is compiled against and what it can call. The token goes
+    to the executable (`game_code_flags.h`) and to the DLL's compile (`-DXBE_GAME_CODE_ABI=<token>`, one of the flags in that file).
+    What went into it is in `out/build/win-x64-mingw/game_code/abi_inputs.txt`. It over-includes: an edit to any of those files makes
+    a new token, so some updates will have the DLL built again that did not strictly need it. `tools/check_game_code_dll.sh` fails if
+    the executable exports a replacement defined outside the two folders.
+  - `image=` is the sections hash of the xbe (its code and data without the certificate, `runtime/xbe/image_hash.h`), and
+    `symbols=` an FNV-1a of `image_symbols.h`: the names and addresses the executable's replacements bind to, which come from the
+    config. The recompiler writes both into `x86_func_mapping.cpp` for the DLL and into `image_symbols.h` for the executable.
+
+  The first start will compare the stamp the same way to decide whether the DLL it finds is current.
 - A C++ exception thrown in the executable unwinds through the DLL's frames: the DLL catches with `catch (...)` and asks the
   executable (`x86_try_resume`) whether it was a resume for that frame, as it can't name the executable's exception type.
 

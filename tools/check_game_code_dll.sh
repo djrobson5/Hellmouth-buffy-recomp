@@ -101,6 +101,13 @@ echo "--- Buffy.exe delay-imports $(wc -l < $W/exe_wants.txt) names from Buffy.d
 $TC/llvm-nm --defined-only $EXE | awk '$3 ~ /^sub_[0-9A-F]{8}$/{print $3}' | sort -u > $W/exe_sub_bodies.txt
 $TC/llvm-nm --defined-only $EXE | awk '$3 ~ /^__imp__sub_[0-9A-F]{8}$/{print $3}' | sort -u > $W/exe_thunks.txt
 $TC/llvm-nm -A --defined-only $(ninja -C $B -t inputs Buffy.exe | grep '\.obj$' | sed "s|^|$B/|") | awk '$4 ~ /^sub_[0-9A-F]{8}$/{print $1}' | sed -E 's/^.*Buffy.dir\/(.*)\/[^\/]+\.obj:.*$/\1/' | sort | uniq -c > $W/override_dirs.txt
+# the sources of those overrides: the ABI stamp hashes the folders in abi_inputs.txt, so each must be in one of them (a replacement
+# defined anywhere else would change without the DLL's stamp saying so)
+$TC/llvm-nm -A --defined-only $(ninja -C $B -t inputs Buffy.exe | grep '\.obj$' | sed "s|^|$B/|") | awk '$4 ~ /^sub_[0-9A-F]{8}$/{print $1}' | sed -E 's/^.*Buffy\.dir\/(.*)\.obj:.*$/\1/' | sort -u > $W/override_sources.txt
+sed -n 's/^override-dir //p' $B/game_code/abi_inputs.txt > $W/override_dirs_hashed.txt
+outside=""; for f in $(cat $W/override_sources.txt); do ok=1; for d in $(cat $W/override_dirs_hashed.txt); do case $f in $d/*) ok=0;; esac; done; [ $ok = 0 ] || outside="$outside $f"; done
+echo "--- sources defining overrides: $(wc -l < $W/override_sources.txt); folders the ABI stamp hashes: $(tr '\n' ' ' < $W/override_dirs_hashed.txt)"
+[ -z "$outside" ]; chk $? "every source that defines an override is in a folder the ABI stamp hashes (outside:${outside:- none})"
 echo "--- sub_XXXXXXXX bodies in Buffy.exe: $(wc -l < $W/exe_sub_bodies.txt), all overrides, from:"; sed 's/^/    /' $W/override_dirs.txt
 echo "    plus $(wc -l < $W/exe_thunks.txt) __imp__sub_XXXXXXXX delay load thunks (jumps into the DLL, no code of their own)"
 grep '^sub_' $W/exe_exports.txt | sort -u > $W/exe_override_exports.txt
@@ -108,6 +115,15 @@ diff -q $W/exe_sub_bodies.txt $W/exe_override_exports.txt >/dev/null; chk $? "th
 # (a COFF symbol has no size, so the thunks are matched by name: each is the import library's stub for one delay import)
 $TC/llvm-readobj --coff-imports $EXE | awk '/DelayImport/{f=1} f && /Symbol:/{print $2}' | sort -u > $W/exe_delay_syms.txt
 diff -q $W/exe_thunks.txt $W/exe_delay_syms.txt >/dev/null; chk $? "the __imp__sub_ symbols the executable defines are exactly its delay imports from the DLL ($(wc -l < $W/exe_thunks.txt))"
+# the ABI stamp: the executable holds the text it expects as a string (game_code.cpp), the DLL the one it says (X86GameCodeStamp, from
+# the recompiler and the -DXBE_GAME_CODE_ABI of its compile); read from the two files, they must be the same text
+$TC/llvm-strings $EXE | grep '^xbe-game-code ' | sort -u > $W/exe_stamp.txt
+$TC/llvm-strings $DLL | grep '^xbe-game-code ' | sort -u > $W/dll_stamp.txt
+echo "--- stamp in Buffy.exe: $(cat $W/exe_stamp.txt)"; echo "--- stamp in Buffy.dll: $(cat $W/dll_stamp.txt)"
+[ $(wc -l < $W/exe_stamp.txt) -eq 1 ] && [ $(wc -l < $W/dll_stamp.txt) -eq 1 ]; chk $? "one stamp in the executable and one in the DLL"
+cmp -s $W/exe_stamp.txt $W/dll_stamp.txt; chk $? "the DLL's stamp is the executable's"
+grep -qx X86GameCodeStamp $W/dll_exports.txt; chk $? "the DLL exports X86GameCodeStamp"
+grep -q "abi=$(sed -n 's/^token //p' $B/game_code/abi_inputs.txt) " $W/exe_stamp.txt; chk $? "the stamp's ABI token is the one CMake wrote to abi_inputs.txt"
 mkdir -p "${KEEP:-/dev/null}" 2>/dev/null; [ -n "$KEEP" ] && cp $W/*.txt "$KEEP"/
 rm -rf $W
 exit $fail

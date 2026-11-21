@@ -34,6 +34,11 @@ What this port changed:
     import library). `IMAGE_LIBRARY` and `IMAGE_SECTIONS_HASH` are in `image_symbols.h`, so the executable has them without the DLL: the
     hash used to come from the generated `x86_func_mapping.cpp`, which the DLL now holds. Hooks are declared `X86_HOST_API` (no
     separate export header: the declaration exports them under mingw). `sdk/tools/symbols` takes an optional `--library`.
+  - The ABI stamp, `X86GameCodeStamp` in the DLL (`xbe-game-code abi=<token> image=<hash> symbols=<hash>`), which `dispatch::Load`
+    compares with the text `app/game_code.cpp` builds from `game_code_flags.h` and `image_symbols.h`, failing with `kExitStaleGameCode`.
+    `XbeRecomp.cmake` computes the token (a SHA-1 of the flags and of the files that define the executable's ABI and replacements,
+    listed in `game_code/abi_inputs.txt`) and `sdk/tools/recomp` writes the rest: `IMAGE_CODE_STAMP` in `image_symbols.h`, and the
+    stamp in `x86_func_mapping.cpp` (compiled only for the DLL), which needs `-DXBE_GAME_CODE_ABI=<token>`.
   - `sdk/tools/LLVM-LICENSE.txt`: the licence text for the clang and lld the first start runs.
   - `sdk/cmake/XbeRecomp.cmake`: `XBE_GAME_CODE_DLL` leaves the generated sources out of the executable, gives it the import library, the
     delay loading and the module definition file, and adds the `game_code_dll` target, which builds the DLL with the first start's

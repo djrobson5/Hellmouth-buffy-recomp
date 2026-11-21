@@ -223,6 +223,13 @@ void CodeGen::EmitHooks(uint32_t va, bool after) {
     }
 }
 
+// FNV-1a 64, the hash the image's sections hash uses (runtime/xbe/image_hash.h)
+static uint64_t Fnv1a(const std::string& text) {
+    uint64_t h = 0xCBF29CE484222325ull;
+    for (unsigned char c : text) h = (h ^ c) * 0x100000001B3ull;
+    return h;
+}
+
 bool CodeGen::Run() {
     std::vector<uint32_t> funcs(an_.functions.begin(), an_.functions.end());
     std::sort(funcs.begin(), funcs.end());
@@ -236,7 +243,8 @@ bool CodeGen::Run() {
     // the release whose file differs only there is accepted (runtime/xbe/image_hash.h). Both are the executable's, not
     // the DLL's, which is built on the player's PC
     syms += F("#define IMAGE_LIBRARY \"%s\"\n", an_.cfg.library.c_str());
-    syms += F("#define IMAGE_SECTIONS_HASH 0x%llXull\n", (unsigned long long)xbe::SectionsHash(an_.img.file));
+    const unsigned long long sections_hash = xbe::SectionsHash(an_.img.file);
+    syms += F("#define IMAGE_SECTIONS_HASH 0x%llXull\n", sections_hash);
     std::vector<uint32_t> absent;
     for (auto& [name, va] : an_.cfg.symbols) {
         uint32_t a = va ? va : 0xFFFF0000u + uint32_t(absent.size());
@@ -255,6 +263,12 @@ bool CodeGen::Run() {
         }
         syms += "\n";
     }
+    // What the game code DLL made from this image must say it was made from (X86GameCodeStamp, below): the image's code and data
+    // (the sections hash) and everything above, the names and addresses the executable's replacements are bound to. The executable
+    // has the same text from here at its own build, and compares it with the DLL's before using the DLL (cpu/dispatch.cpp).
+    const unsigned long long symbols_hash = Fnv1a(syms);
+    const std::string stamp_image = F("image=%016llx symbols=%016llx", sections_hash, symbols_hash);
+    syms += F("#define IMAGE_CODE_STAMP \"%s\"\n", stamp_image.c_str());
     WriteIfChanged(out_ / "image_symbols.h", syms);
 
     // shared declarations
@@ -290,6 +304,13 @@ bool CodeGen::Run() {
     }
 
     std::string map = "#include \"x86_recomp_shared.h\"\n\n";
+    // the DLL's stamp: the executable's ABI (-DXBE_GAME_CODE_ABI=<token> in the compile, from the executable's game_code_flags.h)
+    // and the image and names this code was made from. Only the DLL has it; the code linked into an executable needs none.
+    map += "#ifdef X86_GAME_CODE\n#ifndef XBE_GAME_CODE_ABI\n"
+           "#error \"compile the game code with -DXBE_GAME_CODE_ABI=<the executable's ABI token>, from its game_code_flags.h\"\n#endif\n"
+           "#define X86_STAMP_STR2(x) #x\n#define X86_STAMP_STR(x) X86_STAMP_STR2(x)\n"
+           "extern \"C\" const char X86GameCodeStamp[];\n"
+           "const char X86GameCodeStamp[] = \"xbe-game-code abi=\" X86_STAMP_STR(XBE_GAME_CODE_ABI) \" " + stamp_image + "\";\n#endif\n\n";
     uint32_t lo = 0xFFFFFFFF, hi = 0;
     for (auto& s : an_.img.sections) {
         bool code = false;
@@ -323,7 +344,7 @@ bool CodeGen::Run() {
         std::string library = F("LIBRARY %s\nEXPORTS\n", an_.cfg.library.c_str());
         std::string exports;
         std::string aliases;
-        for (const char* table : {"X86FuncMappings", "X86Continuations", "X86CodeBase", "X86CodeEnd", "X86EntryPoint"})
+        for (const char* table : {"X86FuncMappings", "X86Continuations", "X86CodeBase", "X86CodeEnd", "X86EntryPoint", "X86GameCodeStamp"})
             exports += F("    %s DATA\n", table);
         for (const std::vector<uint32_t>* list : {&funcs, &absent}) {
             for (uint32_t f : *list) {
