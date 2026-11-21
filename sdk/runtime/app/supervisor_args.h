@@ -1,7 +1,7 @@
 #pragma once
-// Whether a start is a normal play start that RecompLauncher made, and so is run under a supervisor (supervisor.cpp). Only the
-// command line is read here, as main.cpp's Args() reads it, and no Windows header is needed: tools/sim_first_start.sh runs
-// tools/supervisor_args_check.cpp over it on a Mac.
+// Whether a start is a normal play start that RecompLauncher made, and so is run under a supervisor (supervisor.cpp on Windows, the
+// keeper of kernel/keeper.h on a Mac). Only the command line is read here, as main.cpp's Args() reads it, and no Windows header is
+// needed: tools/sim_first_start.sh runs tools/supervisor_args_check.cpp over it on a Mac.
 #include <string>
 #include <vector>
 
@@ -49,14 +49,20 @@ inline std::vector<std::wstring> SplitCommandLine(const std::wstring& line) {
 
 // True for a normal play start under RecompLauncher: RECOMPLAUNCHER=1 (by_launcher), no marker of ours yet (already_supervised: this
 // is the game's own process, started by a supervisor), and none of the one-shot modes: --prepare, --relaunched (a restart for a
-// level), --version and --describe-settings. The options are found as main.cpp's Args() finds them: "--name=value" counts as
-// "--name", and the word after an option that takes a value is that value, not an option.
-inline bool ShouldSupervise(const std::wstring& command_line, bool by_launcher, bool already_supervised) {
+// level), --version and --describe-settings (on a Mac also --check-game-code, --print-paths and --title-id, which end before there is a
+// game). The options are found as main.cpp's Args() finds them: "--name=value" counts as "--name", and the word after an option that
+// takes a value is that value, not an option. argv is the program's, argv[0] the program (SplitCommandLine's result on Windows,
+// WidenArgv's on a Mac).
+inline bool ShouldSuperviseArgv(const std::vector<std::wstring>& argv, bool by_launcher, bool already_supervised) {
     if (!by_launcher || already_supervised) return false;
     static const wchar_t* const kTakesValue[] = {L"--game",   L"--config",         L"--textures", L"--log",     L"--saves",
                                                   L"--data", L"--shader-cache", L"--screenshots", L"--instance"};
-    static const wchar_t* const kOneShot[] = {L"--prepare", L"--relaunched", L"--version", L"--describe-settings"};
-    const std::vector<std::wstring> argv = SplitCommandLine(command_line);
+    static const wchar_t* const kOneShot[] = {L"--prepare", L"--relaunched", L"--version", L"--describe-settings"
+#ifdef __APPLE__
+                                              ,
+                                              L"--check-game-code", L"--print-paths", L"--title-id"
+#endif
+    };
     for (size_t i = 1; i < argv.size(); i++) {
         std::wstring a = argv[i];
         bool has_value = false;
@@ -74,6 +80,23 @@ inline bool ShouldSupervise(const std::wstring& command_line, bool by_launcher, 
             }
     }
     return true;
+}
+
+// the same for the command line as Windows gives it, one string
+inline bool ShouldSupervise(const std::wstring& command_line, bool by_launcher, bool already_supervised) {
+    return ShouldSuperviseArgv(SplitCommandLine(command_line), by_launcher, already_supervised);
+}
+
+// A Mac's argv (UTF-8, already split) as ShouldSuperviseArgv takes it. A byte becomes one wide character: only the option names matter,
+// they are ASCII, and what is in a value is never compared.
+inline std::vector<std::wstring> WidenArgv(int argc, char* const* argv) {
+    std::vector<std::wstring> out;
+    for (int i = 0; i < argc; i++) {
+        std::wstring w;
+        for (const char* c = argv[i]; *c; c++) w += wchar_t(static_cast<unsigned char>(*c));
+        out.push_back(w);
+    }
+    return out;
 }
 
 }  // namespace app

@@ -1,5 +1,5 @@
-// The decision of the supervisor (sdk/runtime/app/supervisor_args.h, which has no Windows code) run on this Mac over command lines as
-// RecompLauncher and a player would give them: which are run under a supervisor, and which are the game itself. The launcher's own
+// The decision of the supervisor and of the Mac's keeper (sdk/runtime/app/supervisor_args.h, which has no Windows code) run on this Mac over
+// command lines and argvs as RecompLauncher and a player would give them: which are run under a supervisor, and which are the game itself. The launcher's own
 // start, and its setup, are the real ones (tools/recomplauncher.json.in). tools/sim_first_start.sh builds and runs it.
 //
 //   supervisor_args_check            prints each case that is wrong and "<n> cases"; exits 1 if any is wrong
@@ -73,6 +73,43 @@ int main() {
             std::printf("WRONG: splitting [%ls]\n", s.line);
             wrong++;
         }
-    std::printf("%zu cases\n", cases.size() + splits.size());
+    // a Mac's argv: already split, UTF-8, the same decision (the keeper of kernel/keeper.h; the Mac-only one-shots are not Windows's)
+    struct Argv {
+        std::vector<const char*> argv;
+        bool launcher, marker, supervised;
+        const char* why;
+    };
+    const char* const app = "/Applications/Hellmouth.app/Contents/MacOS/Buffy";
+    const std::vector<Argv> macs = {
+        {{app, "--game", "/Users/x/Buffy.iso", "--data", "/Users/x/Data", "--no-dialogs"}, true, false, true, "mac: RecompLauncher's start"},
+        {{app}, true, false, true, "mac: no arguments"},
+        {{app, "--game=/Users/x/My Games/Buffy.iso"}, true, false, true, "mac: a space in a path is one argument"},
+        {{app, "-psn_0_12345"}, true, false, true, "mac: the process serial number an app gets from Finder is no option"},
+        {{app, "/Users/x/Buffy.iso"}, true, false, true, "mac: a game without an option"},
+        {{app, "--game", "/x.iso"}, false, false, false, "mac: not started by RecompLauncher"},
+        {{app, "--game", "/x.iso"}, true, true, false, "mac: the game process of a keeper"},
+        {{app, "--prepare", "--game", "/x.iso"}, true, false, false, "mac: --prepare"},
+        {{app, "--game=/x.iso", "--prepare"}, true, false, false, "mac: --prepare last"},
+        {{app, "--relaunched"}, true, false, false, "mac: --relaunched"},
+        {{app, "--version"}, true, false, false, "mac: --version"},
+        {{app, "--describe-settings"}, true, false, false, "mac: --describe-settings"},
+        {{app, "--check-game-code"}, true, false, false, "mac: --check-game-code"},
+        {{app, "--print-paths", "--data", "/d"}, true, false, false, "mac: --print-paths"},
+        {{app, "--title-id"}, true, false, false, "mac: --title-id"},
+        {{app, "--data", "--prepare"}, true, false, true, "mac: --prepare as the value of --data is a folder name"},
+        {{app, "--game", "/x --prepare/y.iso"}, true, false, true, "mac: --prepare inside a path"},
+        {{app, "--game", "--version"}, true, false, true, "mac: --version as the value of --game"},
+        {{app, "--game-code", "/d/Buffy.dylib"}, true, false, true, "mac: --game-code with its value is a play start"},
+        {{app, "--instance", "2", "--data", "/d"}, true, false, true, "mac: a second copy"},
+        {{app, "--prepared"}, true, false, true, "mac: another word that starts the same"},
+    };
+    for (const Argv& c : macs) {
+        const bool got = app::ShouldSuperviseArgv(app::WidenArgv(int(c.argv.size()), const_cast<char* const*>(c.argv.data())), c.launcher, c.marker);
+        if (got != c.supervised) {
+            std::printf("WRONG: %s: supervised %d, expected %d\n", c.why, got, c.supervised);
+            wrong++;
+        }
+    }
+    std::printf("%zu cases\n", cases.size() + splits.size() + macs.size());
     return wrong ? 1 : 0;
 }
