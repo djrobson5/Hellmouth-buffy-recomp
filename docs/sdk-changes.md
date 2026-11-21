@@ -38,6 +38,8 @@ What this port changed:
   - `sdk/runtime/app/game_choice.cpp`, `game_files.cpp`: `ChooseGame` (Windows) picks the game as the Mac app does: `--game`, else
     the image remembered in `<data>\disc_image.txt` (kept only once accepted), else `assets`, else `IFileOpenDialog`. `FindGame` is
     split, so `FindGameFrom` can try a place without ending the run; with `XBE_GAME_CODE_DLL` another release is refused.
+  - `sdk/runtime/app/settings.cpp`, `settings_list.cpp`: `[graphics] renderer` defaults to Vulkan on Windows too (Direct3D 12 stays
+    selectable and is used when Vulkan cannot start); the Windows help says what Vulkan lacks.
   - `sdk/tools/recomp`: `[xbe] library`, which only a DLL build needs, makes the recompiler write `exports.def` (what the DLL exports: its tables and one
     `__imp__sub_XXXXXXXX` name for each function) and `imports.def` (the same, with `sub_XXXXXXXX` aliases, for the executable's
     import library). `IMAGE_LIBRARY` and `IMAGE_SECTIONS_HASH` are in `image_symbols.h`, so the executable has them without the DLL: the

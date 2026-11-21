@@ -188,6 +188,10 @@ were already. `--config`, `--saves`, `--log`, `--textures`, `--shader-cache` and
 ships with the exe and is only read (the splash, subtitles, achievement pictures, the compiler folder) stays beside it. Options take
 `--name value` or `--name=value`.
 
+**Renderer.** Vulkan is the default on Windows (`[graphics] renderer = 1`), as it is on the Mac: the renderer this port's features were
+built on. Direct3D 12 stays selectable, and is used when Vulkan cannot start. Vulkan lacks the anti-aliasing choices, HDR and the
+upscalers that Direct3D 12 has.
+
 ## Achievements
 
 The original game has no achievements, so Hellmouth adds 28: one for each boss, plus kills (three of them with particular weapons), secrets, finishing the game on

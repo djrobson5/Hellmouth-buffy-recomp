@@ -124,9 +124,20 @@ std::vector<cfg::Desc> SettingsList() {
          "screens, so this brightens what it drew rather than adding detail. On other screens the picture stays as it is.",
          &s.hdr},
         {"graphics", "renderer", Type::Choice, "Renderer",
+#ifdef _WIN32
+         "Vulkan is the default: the renderer this game's own features were built on. Direct3D 12 has what Vulkan still lacks, "
+         "the anti-aliasing choices, HDR and the upscalers, so choose it for those. If Vulkan can't start, Direct3D 12 is used. "
+         "Takes effect at the next start.",
+#else
          "Direct3D 12 is the tested renderer. Vulkan is still being made: it draws the game but is untested and lacks "
          "anti-aliasing, HDR and the upscalers. If it can't start, Direct3D 12 is used. Takes effect at the next start.",
-         nullptr, &s.renderer, nullptr, 0, 0, {"0", "1"}, nullptr, nullptr, {"Direct3D 12", "Vulkan (in development)"}},
+#endif
+         nullptr, &s.renderer, nullptr, 0, 0, {"0", "1"}, nullptr, nullptr,
+#ifdef _WIN32
+         {"Direct3D 12", "Vulkan"}},
+#else
+         {"Direct3D 12", "Vulkan (in development)"}},
+#endif
         {"graphics", "widescreen", Type::Bool, "Widescreen correction",
          "Shows more at the sides. Off keeps the original 4:3 picture, with bars at the sides.", &s.widescreen, nullptr,
          nullptr, 0, 0, {}, "widescreen"},

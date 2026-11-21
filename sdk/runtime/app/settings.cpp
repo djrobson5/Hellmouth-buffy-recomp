@@ -38,8 +38,10 @@ Settings& Get() {
         d.display_mode = DisplayMode::Windowed;
         d.width = 960;
         d.height = 720;
-        d.renderer = 1;  // Vulkan; 0 is the reference renderer on the CPU, as there's no Direct3D 12 here
 #endif
+        // Vulkan: the renderer the game's features were built on. On the Mac 0 is the reference renderer on the CPU, as there's no
+        // Direct3D 12 there; on Windows it is Direct3D 12, which stays selectable, and is used when Vulkan cannot start
+        d.renderer = 1;
         return d;
     }();
     return s;

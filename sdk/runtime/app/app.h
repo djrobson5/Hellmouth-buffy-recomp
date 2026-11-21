@@ -87,7 +87,7 @@ struct Settings {
     uint32_t upscaler = 0;                 // 0 off, 1 FSR (AMD, any card), 2 DLSS (NVIDIA RTX): drawn smaller, upscaled temporally
     uint32_t upscaler_quality = 1;         // 0 native (DLAA / FSR native AA), 1 quality, 2 balanced, 3 performance, 4 ultra performance
     bool hdr = false;                      // HDR output on an HDR screen (Windows HDR on), read at start
-    uint32_t renderer = 0;                 // 0 Direct3D 12, 1 Vulkan (in development; Direct3D 12 if it can't start), read at start
+    uint32_t renderer = 0;                 // 0 Direct3D 12, 1 Vulkan (Direct3D 12 if it can't start), read at start; Vulkan is the default
     uint32_t colour_look = 0;              // 0 original, 1 film, 2 vivid, 3 dark fantasy
     uint32_t look_strength = 100;          // 0 to 100, how much of the look
     // [input], as ROTK Fix's controller options; 0 deadzone and threshold leave it to the game, as on the console
