@@ -1,0 +1,22 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": {"major": 3, "minor": 25, "patch": 0},
+    "configurePresets": [
+        {
+            "name": "win-x64-mingw",
+            "displayName": "The first start's tools (xbe_recomp, buffy_config) for Windows x64, cross-built with llvm-mingw (set LLVM_MINGW)",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/../out/build/win-x64-mingw-tools",
+            "toolchainFile": "${sourceDir}/../sdk/cmake/llvm-mingw.cmake",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_POLICY_VERSION_MINIMUM": "3.5",
+                "XBE_HOST_TOOLS": "${sourceDir}/../build/tools"
+            },
+            "condition": {"type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Windows"}
+        }
+    ],
+    "buildPresets": [
+        {"name": "win-x64-mingw", "configurePreset": "win-x64-mingw", "targets": ["xbe_recomp", "buffy_config", "buffy_config_names"]}
+    ]
+}

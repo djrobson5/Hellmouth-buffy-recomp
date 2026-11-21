@@ -109,20 +109,27 @@ cmake --build out/build/win-x64-mingw                    # Buffy.exe
 cmake --build out/build/win-x64-mingw --target game_code_dll   # game_code/Buffy.dll, beside the exe's import library
 tools/check_game_code_dll.sh                             # the exe and the DLL link with nothing undefined, and agree; and tools/library_calls.cpp,
                                                          # which uses every library call the recompiler can emit, links against the exe too
-tools/sim_first_start.sh                                 # the first start's commands, in a folder with a space and an accent
+tools/sim_first_start.sh                                 # the whole first start, from the disc's files to a checked DLL, in a folder with a
+                                                         # space and an accent
 ```
 
-The first start runs a config tool as well as the recompiler:
+The first start runs two more programs, which are built for Windows apart from the executable (`tools/`, its own CMake project, which
+`tools/regen.sh` already builds for this Mac with `xbe_recomp`):
 
 ```sh
-cmake --build build/tools --target buffy_config buffy_config_names   # the config tool, and the names it binds (tools/regen.sh builds xbe_recomp there)
+cmake --build build/tools --target buffy_config buffy_config_names   # for this machine: the config tool, and the names it binds
+(cd tools && cmake --preset win-x64-mingw && cmake --build --preset win-x64-mingw)
+    # out/build/win-x64-mingw-tools/: xbe_recomp.exe, buffy_config.exe and sdk_names.txt, beside which buffy_config looks for it
 tools/check_config_tool.sh                               # buffy_config against make_config.py on the local assets, byte for byte
 ```
 
 `buffy_config` is `tools/make_config.py` in C++ (it must write the same file; `tools/regen.sh` still runs the Python), so that the
 player's PC can make `config/game.toml` from the `final.map` and `Default.xbe` on their own disc. `make_config.py` found the names of
 the SDK's functions the config binds by reading `sdk/runtime`, which the player's PC does not have: `buffy_config --scan-sdk` finds
-them at build time, into `sdk_names.txt`, which goes beside the program.
+them at build time, with a program for the build machine (`XBE_HOST_TOOLS`, as the cross build asks), into `sdk_names.txt`. Both
+Windows programs are linked `-static` and import only system DLLs (UCRT and `kernel32`), so nothing is installed beside them, and
+carry a manifest (`sdk/tools/tool.manifest`) that makes their command lines UTF-8, for a folder with an accented name. That manifest
+and the Windows programs are untested: nothing here can run a Windows program.
 
 `XBE_USE_GENERATED` (set by the preset) builds from `generated/game` as it is, rather than running the recompiler, which would
 be a Windows program that can't run here. `XBE_GAME_CODE_DLL` (also set by it) builds the game's code as `Buffy.dll` and leaves
