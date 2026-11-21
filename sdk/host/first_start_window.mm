@@ -13,8 +13,10 @@
 // the host is built without ARC (sdk/harness/build.sh): what a global keeps past the autorelease pool is retained by hand
 #if __has_feature(objc_arc)
 #define KEEP(x) (x)
+#define RELEASE(x) ((void)0)
 #else
 #define KEEP(x) [(x) retain]
+#define RELEASE(x) [(x) release]
 #endif
 
 @interface BuffyFirstStartDelegate : NSObject <NSWindowDelegate>
@@ -113,7 +115,9 @@ bool ProgressAskStop(const std::string& title, const std::string& question) {
         alert.alertStyle = NSAlertStyleInformational;
         [alert addButtonWithTitle:@"Keep going"];
         [alert addButtonWithTitle:@"Stop"];
-        return [alert runModal] == NSAlertSecondButtonReturn;
+        const bool stop = [alert runModal] == NSAlertSecondButtonReturn;
+        RELEASE(alert);
+        return stop;
     }
 }
 
@@ -121,13 +125,19 @@ void ProgressClose() {
     @autoreleasepool {
         if (g_activity) {
             [[NSProcessInfo processInfo] endActivity:g_activity];
+            RELEASE(g_activity);  // (retained in ProgressOpen)
             g_activity = nil;
         }
         if (!g_window) return;
         g_window.delegate = nil;
         [g_window orderOut:nil];
         [g_window close];
+        // everything ProgressOpen made with alloc/init is released here (the window held the views, and goes with them)
+        for (id owned in @[ g_window, g_delegate, g_heading, g_stage, g_bar, g_percent, g_left ]) RELEASE(owned);
         g_window = nil;
+        g_delegate = nil;
+        g_heading = g_stage = g_percent = g_left = nil;
+        g_bar = nil;
     }
 }
 

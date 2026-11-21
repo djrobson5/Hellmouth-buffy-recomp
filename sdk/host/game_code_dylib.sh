@@ -3,8 +3,9 @@
 #   -r repo   -g generated folder of the image   -o out folder   -n exe name
 # Makes <out>/compiler, laid out as the first start finds its tools (app/game_build.h, Layout::Compiler), and builds the dylib from the
 # generated sources with the first start's own build code (tools/first_start_check.cpp --sources over app/game_build.cpp). <out> is then
-# what a release holds beside the executable (the Windows release's counterpart, tools/package_windows.sh); packaging it as an app is
-# sdk/host/bundle.sh's, where <out>/compiler goes to Buffy.app/Contents/Resources/compiler (app::AppFolder in sdk/host/main.cpp):
+# what a release holds beside the executable (the Windows release's counterpart, tools/package_windows.sh). Packaging it as an app is
+# sdk/host/bundle.sh's, which does not do it yet (milestone M5): then <out>/compiler is to go to Buffy.app/Contents/Resources/compiler
+# (app::AppFolder in sdk/host/main.cpp). What <out>/compiler holds:
 #   compiler/clang, compiler/ld64.lld   scripts that run the llvm-mingw toolchain at $LLVM_MINGW (default ~/Projects/toolchains/llvm-mingw),
 #                                       which is built from source (its lld has the Mach-O port); a release carries its own copies.
 #                                       With MAC_DEPS=<folder> (tools/mac/build_toolchain.sh): copies of its bin/clang and bin/ld64.lld,

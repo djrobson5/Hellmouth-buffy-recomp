@@ -14,11 +14,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <optional>
 #include <thread>
 
 #include <SDL3/SDL.h>
@@ -53,6 +55,9 @@ std::wstring Wide(const std::string& utf8) { return fs::path(utf8).wstring(); }
 std::string Narrow(const std::wstring& w) { return fs::path(w).string(); }
 
 gb::Layout MakeLayout() { return gb::Layout{AppFolder(), DataDir(), LogFolder()}; }
+
+// the programs of a build that is running (gamebuild::PosixRunner): where a later build finds the ones a killed build left
+fs::path ChildrenFile(const gb::Layout& layout) { return layout.data / "cache" / "game-code.children"; }
 
 // compilers that run at once: one a logical processor, as many as the free memory holds
 size_t Slots() {
@@ -147,6 +152,26 @@ void ShowMessage(const std::string& text) {
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title.c_str(), text.c_str(), nullptr);
 }
 
+// A stop from outside (SIGTERM, SIGINT: a launcher's Stop, a timeout, Ctrl-C, the system logging out) cancels the build, which ends the compilers.
+// Only while a build runs: the game that starts afterwards has the handlers it had. Under --prepare the run then ends with kExitBuildFailed
+// and "stopped" like any other failure; with the window, as the player's own Stop does.
+void OnStop(int) { g_progress.cancel = true; }
+
+class StopSignals {
+public:
+    StopSignals() : term_(std::signal(SIGTERM, OnStop)), int_(std::signal(SIGINT, OnStop)) {}
+    ~StopSignals() {
+        if (term_ != SIG_ERR) std::signal(SIGTERM, term_);
+        if (int_ != SIG_ERR) std::signal(SIGINT, int_);
+    }
+    StopSignals(const StopSignals&) = delete;
+    StopSignals& operator=(const StopSignals&) = delete;
+
+private:
+    void (*term_)(int);
+    void (*int_)(int);
+};
+
 // a build on its own thread, the window on this one
 enum class Result { Start, Cancelled, Failed };
 
@@ -159,7 +184,8 @@ Result BuildWithWindow(const GameFiles& game, const gb::Layout& layout, const gb
     const std::string title = Narrow(kGame.title);
     const bool shown = host::ProgressOpen(title);
     if (!shown) LOGW("first start: the progress window could not be opened, the build goes on without one");
-    gb::PosixRunner runner(layout.Log());
+    gb::PosixRunner runner(layout.Log(), false, ChildrenFile(layout));  // (the caller holds the build lock: orphans of a killed build end here)
+    const StopSignals stop_on_signal;
     gb::Failure failure;
     gb::Outcome outcome = gb::Outcome::Failed;
     std::atomic<bool> finished{false};
@@ -190,14 +216,24 @@ Result BuildWithWindow(const GameFiles& game, const gb::Layout& layout, const gb
     return outcome == gb::Outcome::Cancelled ? Result::Cancelled : Result::Start;
 }
 
-// one build at a time: another copy started meanwhile (or a launcher's --prepare) waits for it, then finds the dylib current
+// one build at a time: another copy started meanwhile (or a launcher's --prepare) waits for it, then finds the dylib current. flock locks the
+// open file description, so a second BuildLock over the same file in this process would wait for the first for ever: whoever holds one
+// passes the fact on (EnsurePictures' `locked`), never opens another. (main.cpp's Fail names the same file.)
 class BuildLock {
 public:
     explicit BuildLock(const fs::path& data) {
         std::error_code ec;
         fs::create_directories(data / "cache", ec);
-        fd_ = open((data / "cache" / "game-code.lock").c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
-        if (fd_ >= 0) flock(fd_, LOCK_EX);
+        const std::string path = (data / "cache" / "game-code.lock").string();
+        fd_ = open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+        if (fd_ < 0) {
+            LOGW("Game code: the lock file %s could not be opened (%s): another copy's build is not waited for", path.c_str(), std::strerror(errno));
+            return;
+        }
+        int locked;
+        while ((locked = flock(fd_, LOCK_EX)) != 0 && errno == EINTR) {
+        }
+        if (locked != 0) LOGW("Game code: the lock %s could not be taken (%s): another copy's build is not waited for", path.c_str(), std::strerror(errno));
     }
     ~BuildLock() {
         if (fd_ >= 0) close(fd_);  // the lock goes with it
@@ -218,12 +254,14 @@ gb::DllState State(const gb::Layout& layout, const gb::Recipe& recipe) {
 }
 
 // The achievement pictures and the icon, made when the marker says they are not: on a start whose dylib is current (the build makes them
-// otherwise). No window: it takes a moment. Never fatal; what went wrong is in logs/compile.log, which is added to.
-void EnsurePictures(const GameFiles& game, const gb::Layout& layout, const gb::Recipe& recipe) {
+// otherwise). No window: it takes a moment. Never fatal; what went wrong is in logs/compile.log, which is added to. `locked`: the caller holds the
+// build lock already (it is not taken again, see BuildLock).
+void EnsurePictures(const GameFiles& game, const gb::Layout& layout, const gb::Recipe& recipe, bool locked) {
     if (gb::PicturesCurrent(layout, recipe)) return;
-    BuildLock lock(layout.data);  // a copy started at the same time is making them
+    std::optional<BuildLock> lock;
+    if (!locked) lock.emplace(layout.data);  // a copy started at the same time is making them
     if (gb::PicturesCurrent(layout, recipe)) return;
-    gb::PosixRunner runner(layout.Log(), true);
+    gb::PosixRunner runner(layout.Log(), true, ChildrenFile(layout));
     gb::MakePictures(layout, recipe, [&](gb::PictureInputs& in, std::string& why) { return ReadPictureFiles(game, in, why); }, runner);
 }
 
@@ -235,10 +273,6 @@ void DeleteWork(const gb::Layout& layout) {
     else LOGR("Game code: work folder deleted");
 }
 
-// --prepare run under a launcher that stops it (Stop, a timeout): the build is cancelled, which ends the compilers, and the run ends
-// with kExitBuildFailed and "stopped" like any other failure
-void OnStop(int) { g_progress.cancel = true; }
-
 }  // namespace
 
 bool PrepareGameCode(const GameFiles& game) {
@@ -247,7 +281,7 @@ bool PrepareGameCode(const GameFiles& game) {
     gb::DllState state = State(layout, recipe);
     const bool quiet = Args().relaunched || Args().no_dialogs;
     if (state == gb::DllState::Current) {
-        if (!quiet) EnsurePictures(game, layout, recipe);
+        if (!quiet) EnsurePictures(game, layout, recipe, false);
         return true;
     }
 
@@ -278,12 +312,13 @@ bool PrepareGameCode(const GameFiles& game) {
     }
     // this process's build made the pictures, or tried and logged why not (and tries again at the next start): only a dylib that a copy started
     // earlier built has not had the step looked at here
-    if (!built_here) EnsurePictures(game, layout, recipe);
+    if (!built_here) EnsurePictures(game, layout, recipe, true);
     return true;
 }
 
 // --prepare: the same build with no window, for a launcher. progress lines on stdout, the reason on stderr
 int PrepareOnly(const GameFiles& game) {
+    std::signal(SIGPIPE, SIG_IGN);  // a launcher that has closed the pipe: the writes fail, the build is not killed by them
     const gb::Layout layout = MakeLayout();
     const gb::Recipe recipe = gamecode::Recipe(Slots());
     BuildLock lock(layout.data);
@@ -292,12 +327,12 @@ int PrepareOnly(const GameFiles& game) {
     };
     if (State(layout, recipe) == gb::DllState::Current) {
         if (!gb::PicturesCurrent(layout, recipe)) PrintOut("progress 0.000 Making the achievement pictures and the icon");
-        EnsurePictures(game, layout, recipe);  // the dylib being current says nothing of the pictures
+        EnsurePictures(game, layout, recipe, true);  // the dylib being current says nothing of the pictures
         PrintOut("progress 1.000 The game's code is up to date");
         clean();
         return kExitOk;
     }
-    gb::PosixRunner runner(layout.Log());  // a fresh compile.log: every reason below is in it as well as on stderr
+    gb::PosixRunner runner(layout.Log(), false, ChildrenFile(layout));  // a fresh compile.log: every reason below is in it as well as on stderr
     auto failed = [&](const std::string& line, bool in_log) {
         LOGE("Game code: %s", line.c_str());
         logx::Flush();
@@ -319,8 +354,7 @@ int PrepareOnly(const GameFiles& game) {
         PrintOut(std::string("progress ") + fraction + " " + text);
     };
     g_progress.changed = report;
-    std::signal(SIGTERM, OnStop);
-    std::signal(SIGINT, OnStop);
+    const StopSignals stop_on_signal;
     report();
     gb::Failure failure;
     gb::Outcome outcome = gb::Build(

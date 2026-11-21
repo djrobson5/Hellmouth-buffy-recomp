@@ -15,8 +15,9 @@
 #   code changed, in a folder) end --prepare with 2, 2, 2, 2, 3 and the reason on stderr and in compile.log
 #   a first --prepare from the disc: progress lines, exit 0, the dylib there and current (--check-game-code loads it), the 28 achievement
 #   pictures (the same pixels as assets/achievements, when that is there), Buffy.png and Buffy.ico; the second --prepare: nothing runs
-#   a damaged dylib and one built for another version are made again (the objects are reused); --prepare stopped by a signal ends with 9 and
-#   the next one carries on; --clean-work; RECOMPLAUNCHER_DATA with the same data; starts under --no-dialogs: no dylib 7, a stale one 8, no
+#   the pictures made again when only pictures.stamp is gone (a build lock taken twice would wait for ever: run under a 120 s alarm), the
+#   dylib untouched; a damaged dylib and one built for another version are made again (the objects are reused); --prepare stopped by SIGTERM
+#   ends with 9, no compiler left and none listed; stopped by SIGKILL, the next one ends the compilers that were left and carries on; --clean-work; RECOMPLAUNCHER_DATA with the same data; starts under --no-dialogs: no dylib 7, a stale one 8, no
 #   game 2, the disc kept in <data>/disc_image.txt found again
 #   and that the progress window is never opened by any of it (its line is not in any log)
 # Prints PASS or FAIL for each check, and the time of the first start; exits 1 on a FAIL. Opens no window, runs no game.
@@ -33,7 +34,7 @@ DISC=${DISC:-$(ls "$REPO"/Buffy*USA*/*.iso 2> /dev/null | head -1 || true)}
 case $DISC in *Europe* | *Chaos*) die "DISC is not the USA release: $DISC" ;; esac
 [ -f assets/Default.xbe ] || die "no assets/Default.xbe (tools/regen.sh): the wrong-release check changes a copy of it"
 D="$REPO/build/sim-mac dir é"
-rm -rf "$D"; mkdir -p "$D/home"; D=$(cd "$D" && pwd -P)
+rm -rf "$D"; mkdir -p "$D/home"; D=$(cd "$D" && pwd -P) || die "cannot make the scratch folder $D"
 cleanup() { [ -n "${KEEP:-}" ] || rm -rf -- "$D"; }
 trap cleanup EXIT
 export HOME="$D/home"
@@ -153,8 +154,8 @@ settings: $X/settings.toml
 achievements: $X/achievements.txt
 compiler: $APP/Contents/Resources/compiler
 EOF
-nothing_made; chk $? "--print-paths made nothing (the home folder is empty, and so are the data folders)"
-[ ! -e "$X" ]; chk $? "--print-paths did not make the data folder"
+nothing_made && [ ! -e "$X" ] && [ ! -e "$D/other" ] && [ -z "$(cd "$P" && ls | grep -vxE 'Buffy|Frameworks|compiler' || true)" ]
+chk $? "--print-paths made nothing: the home folder is empty, the data folders named ($X, $D/other) do not exist, nothing was added beside the executable"
 
 echo "== no game, a wrong game"
 mkdir -p "$D/wrong"
@@ -205,6 +206,9 @@ if [ -d assets/achievements ]; then python3 -I tools/compare_pngs.py "$X/achieve
 nothing_made; chk $? "nor into the home folder"
 [ -z "$(find "$X" -maxdepth 1 \( -name hdd -o -name settings.toml \) | head -1)" ]; chk $? "--prepare made no settings.toml or hdd (it plays nothing)"
 grep -q '^time: total' "$LOG"; chk $? "compile.log has the build's times"
+TOTAL=$(sed -n 's/^compile: \([0-9]*\) files to compile.*/\1/p' "$LOG" | head -1)
+[ "${TOTAL:-0}" -gt 0 ] 2> /dev/null; chk $? "the plan in compile.log says how many files there are to compile ($TOTAL), which the stop checks below count from"
+[ "${TOTAL:-0}" -gt 0 ] 2> /dev/null || TOTAL=1000000
 mtime=$(stat -f %m "$X/build/Buffy.dylib"); logtime=$(stat -f %m "$LOG")
 
 echo "== the second start: nothing runs"
@@ -213,6 +217,21 @@ t0=$(now)
 t1=$(now)
 [ "$code" = 0 ] && [ "$(cat "$D/p2.out")" = "progress 1.000 The game's code is up to date" ]; chk $? "--prepare again: exit $code, \"$(cat "$D/p2.out")\" in $(secs "$t0" "$t1") s"
 [ "$(stat -f %m "$X/build/Buffy.dylib")" = "$mtime" ] && [ "$(stat -f %m "$LOG")" = "$logtime" ]; chk $? "the dylib and compile.log were not touched"
+
+echo "== the pictures made again when only their marker is gone (the build lock is taken once, so this ends)"
+cp -c "$X/Buffy.png" "$D/Buffy.png.before"
+png_time=$(stat -f %Fm "$X/Buffy.png")
+rm -f "$X/pictures.stamp"
+t0=$(now)
+perl -e 'alarm 120; exec @ARGV' "$EXE" --prepare --game "$DISC" --data "$X" > "$D/p5.out" 2> "$D/p5.err"; code=$?
+t1=$(now)
+[ "$code" = 0 ]; chk $? "--prepare with the marker gone: exit $code in $(secs "$t0" "$t1") s (wanted 0; 142 is the 120 s alarm: a deadlock on the lock)"
+[ "$(cat "$D/p5.out")" = "progress 0.000 Making the achievement pictures and the icon
+progress 1.000 The game's code is up to date" ]; chk $? "it said it was making the pictures, then that the code is up to date"
+[ "$(cat "$X/pictures.stamp" 2> /dev/null)" = "pictures 1" ] && [ "$(stat -f %Fm "$X/Buffy.png")" != "$png_time" ] && cmp -s "$X/Buffy.png" "$D/Buffy.png.before"
+chk $? "the marker is back, Buffy.png was written again (same bytes), and there are $(ls "$X/achievements"/*.png 2> /dev/null | wc -l | tr -d ' ') achievement pictures"
+[ "$(stat -f %m "$X/build/Buffy.dylib")" = "$mtime" ]; chk $? "the dylib was not touched"
+rm -f "$D/Buffy.png.before"
 
 echo "== a damaged dylib, and one made for another version"
 cp -c "$X/build/Buffy.dylib" "$D/good.dylib"
@@ -256,24 +275,50 @@ mkdir -p "$N"
 printf '%s\n' "$DISC" > "$N/disc_image.txt"
 "$EXE" --no-dialogs --data "$N" > /dev/null 2> "$D/n.err"; code=$?
 [ "$code" = 7 ] && [ "$(cat "$N/disc_image.txt")" = "$DISC" ]; chk $? "the disc kept in <data>/disc_image.txt is found again with no --game (7: no dylib), and kept"
+printf '%s\n' "$D/moved.iso" > "$N/disc_image.txt"
+"$EXE" --no-dialogs --data "$N" > /dev/null 2> "$D/n.err"; code=$?
+[ "$code" = 2 ] && [ ! -e "$N/disc_image.txt" ]; chk $? "a kept disc that is no longer there: exit $code (wanted 2), and only then is it forgotten"
+
 
 echo "== a build stopped by a signal, and carried on; --clean-work"
 S="$D/data-stopped"
+# up_to <file> <n>: the progress lines in <file> have reached "file <n> of"
+up_to() { awk -v t="$2" '/Compiling the game.*file [0-9]+ of/ { match($0, /file [0-9]+ of/); if (substr($0, RSTART + 5, RLENGTH - 8) + 0 >= t) f = 1 } END { exit !f }' "$1" 2> /dev/null; }
 "$EXE" --prepare --game "$DISC" --data "$S" > "$D/k.out" 2> "$D/k.err" &
 pid=$!
-# when a good part of the files are compiled, so that the next run has something to reuse
-for _ in $(seq 1 600); do grep -qE 'Compiling the game.*file [4-9][0-9] of' "$D/k.out" 2> /dev/null && break; sleep 0.1; done
+# when a third of the files are compiled, so that the next run has something to reuse
+for _ in $(seq 1 1200); do up_to "$D/k.out" $((TOTAL / 3)) && break; sleep 0.1; done
 kill -TERM $pid 2> /dev/null
 wait $pid; code=$?
-[ "$code" = 9 ] && grep -q '^error: stopped' "$D/k.err"; chk $? "SIGTERM while compiling (after about 40 files): exit $code (wanted 9), \"$(grep -m1 '^error: ' "$D/k.err" | cut -c1-60)...\""
+[ "$code" = 9 ] && grep -q '^error: stopped' "$D/k.err"; chk $? "SIGTERM while compiling (after about $((TOTAL / 3)) of $TOTAL files): exit $code (wanted 9), \"$(grep -m1 '^error: ' "$D/k.err" | cut -c1-60)...\""
 sleep 0.5
 ! pgrep -f "$P/compiler/clang" > /dev/null; chk $? "no compiler is left running"
+[ ! -e "$S/cache/game-code.children" ]; chk $? "and none is listed as running (cache/game-code.children is gone)"
 [ ! -e "$S/build/Buffy.dylib" ]; chk $? "and no dylib was made"
+# the same with SIGKILL, which nothing can catch: the compilers are left running, and the next build ends them before it starts
+"$EXE" --prepare --game "$DISC" --data "$S" > "$D/k3.out" 2> "$D/k3.err" &
+pid=$!
+for _ in $(seq 1 600); do grep -q 'Compiling the game' "$D/k3.out" 2> /dev/null && break; sleep 0.1; done
+sleep 0.5
+kill -KILL $pid 2> /dev/null
+wait $pid 2> /dev/null; code=$?
+[ "$code" = 137 ]; chk $? "SIGKILL while compiling: exit $code (137)"
+if pgrep -f "$P/compiler/clang" > /dev/null; then
+    [ -s "$S/cache/game-code.children" ]; chk $? "compilers were left running ($(pgrep -f "$P/compiler/clang" | wc -l | tr -d ' ')) and the children file lists them"
+    orphans=1
+else
+    echo "SKIP  no compiler was left running by the SIGKILL (the files were all compiled by then): the orphan check does not apply this time"
+    orphans=
+fi
 t0=$(now)
 "$EXE" --prepare --game "$DISC" --data "$S" --clean-work > "$D/k2.out" 2> "$D/k2.err"; code=$?
 t1=$(now)
+if [ -n "$orphans" ]; then
+    grep -q '^orphans: ended [0-9]* group' "$S/logs/compile.log"; chk $? "the next build ended them before it began (compile.log: \"$(grep -m1 '^orphans: ' "$S/logs/compile.log" | cut -c1-70)\")"
+fi
+! pgrep -f "$P/compiler/clang" > /dev/null; chk $? "no compiler is running after it"
 compiled=$(sed -n 's/^time: compile [0-9]* ms (\([0-9]*\) files compiled.*/\1/p' "$S/logs/compile.log")
-[ "$code" = 0 ] && [ -n "$compiled" ] && [ "$compiled" -lt 129 ]; chk $? "the next --prepare carries on: exit $code in $(secs "$t0" "$t1") s ($(grep '^time: compile' "$S/logs/compile.log"): the files compiled before the stop are reused)"
+[ "$code" = 0 ] && [ -n "$compiled" ] && [ "$compiled" -lt "$TOTAL" ]; chk $? "the next --prepare carries on: exit $code in $(secs "$t0" "$t1") s ($(grep '^time: compile' "$S/logs/compile.log"): the files compiled before the stops are reused)"
 [ -f "$S/build/Buffy.dylib" ] && [ ! -e "$S/cache/game-code" ]; chk $? "--clean-work: the dylib is there and cache/game-code is gone"
 "$EXE" --check-game-code --data "$S" > /dev/null 2>&1; chk $? "and it loads"
 

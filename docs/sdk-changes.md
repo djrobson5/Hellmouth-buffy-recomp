@@ -199,3 +199,9 @@ What this port changed:
   `--option=value`, `--print-paths`. `app::AppFolder` is where the compiler folder is (beside the exe; in an app `Contents/Resources`). The
   achievement pictures and the icon are read from the data folder first (`ach::` icons, the Dock icon from `Buffy.png`). `sdk/host/game_code_dylib.sh`
   also builds `xbe_recomp`, `buffy_config` and `sdk_names.txt` into `<out>/compiler`. `tools/mac/sim_first_start_mac.sh` plays it with no window.
+  `sdk/host/bundle.sh` does not put `compiler/` into an app yet (milestone M5); until then an app's first start stops with "The app is incomplete".
+  The build's programs run in process groups of their own, and are ended with their groups on a stop (SIGTERM and SIGINT cancel the build, with the
+  window or under `--prepare`); a build killed with SIGKILL leaves its programs listed in `cache/game-code.children`, which the next build (holding
+  `cache/game-code.lock`) ends before it starts. Never point `--data` or `RECOMPLAUNCHER_DATA` at `~/Library/Application Support/Buffy` for an
+  existing install: a data folder named gives the Windows layout, and `achievements.txt` is then looked for in the folder itself, not in `logs/`, so the
+  earned achievements of the app's own layout would not be found.

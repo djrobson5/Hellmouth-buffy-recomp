@@ -145,9 +145,16 @@ std::string ImageStampOf(const std::string& text) {
     return end == std::string::npos ? std::string() : text.substr(at + 1, end - at - 1);
 }
 
-// what to try after a tool failed: antivirus and a long path are the two causes the first starts of other releases met
-std::string HintFor(const Layout& layout, bool did_not_start, uint32_t code, bool vanished) {
+// what to try after a tool failed: antivirus and a long path are the two causes the first starts of other releases met. On a Mac the tools are
+// files of the app (a Windows PC's zip is extracted by the player), and nothing of the Windows kind (a DLL a tool cannot find, a path limit) applies
+std::string HintFor(const Layout& layout, const Recipe& recipe, bool did_not_start, uint32_t code, bool vanished) {
     std::string hint;
+    if (recipe.target == Target::MachO) {
+        if (did_not_start || vanished)
+            hint = "A file of the app's compiler folder may have been removed or blocked. Download the game again, then start it: what is done so "
+                   "far is kept.";
+        return hint;
+    }
     if (did_not_start || vanished || code == kInitFailed || code == kAccessDenied || code == 0xC0000005)
         hint = "Antivirus software may have blocked or removed a file of the game. Allow the game's folder in it (or extract the "
                "zip again) and start the game again: what is done so far is kept. ";
@@ -325,11 +332,11 @@ bool Builder::RunTool(const std::string& step, const char* tool, const std::vect
         case Ran::Cancelled:
             return false;
         case Ran::NotStarted:
-            return Fail(step, ToolName(recipe_, tool) + " could not be started (" + why + ")", HintFor(layout_, true, 0, false));
+            return Fail(step, ToolName(recipe_, tool) + " could not be started (" + why + ")", HintFor(layout_, recipe_, true, 0, false));
         case Ran::Failed:
             break;
     }
-    return Fail(step, ToolName(recipe_, tool) + " failed (" + ExitText(code) + ")", HintFor(layout_, false, code, false));
+    return Fail(step, ToolName(recipe_, tool) + " failed (" + ExitText(code) + ")", HintFor(layout_, recipe_, false, code, false));
 }
 
 bool Builder::Prepare(const ReadInputs& read) {
@@ -343,7 +350,7 @@ bool Builder::Prepare(const ReadInputs& read) {
     if (!read(inputs, why)) return Fail("Reading the game from your disc", why);
     if (!WriteFile(work_ / "Default.xbe", inputs.xbe.data(), inputs.xbe.size()) ||
         !WriteFile(work_ / "final.map", inputs.map.data(), inputs.map.size()))
-        return Fail("Writing the game's files", "cannot write into " + U8(work_), HintFor(layout_, true, 0, false));
+        return Fail("Writing the game's files", "cannot write into " + U8(work_), HintFor(layout_, recipe_, true, 0, false));
     run_.Note("disc: Default.xbe " + std::to_string(inputs.xbe.size()) + " bytes, final.map " + std::to_string(inputs.map.size()) + " bytes");
     return true;
 }
@@ -356,7 +363,7 @@ bool Builder::Config() {
                  {A("--map"), A("final.map"), A("--xbe"), A("Default.xbe"), A("--out"), A("game.toml")}, work_))
         return false;
     std::string toml = ReadText(work_ / "game.toml");
-    if (toml.empty()) return Fail("Making the game's configuration", "buffy_config.exe wrote no game.toml", HintFor(layout_, false, 0, true));
+    if (toml.empty()) return Fail("Making the game's configuration", ToolName(recipe_, "buffy_config") + " wrote no game.toml", HintFor(layout_, recipe_, false, 0, true));
     if (!ConfigNumber(toml, "partitions", partitions_) || partitions_ == 0 || partitions_ > 4096)
         return Fail("Making the game's configuration", "game.toml has no partition count");
     const std::string& config_library = recipe_.config_library.empty() ? recipe_.library : recipe_.config_library;
@@ -388,16 +395,19 @@ bool Builder::Translate() {
 bool Builder::CheckSources() {
     for (const std::string& name : all_)
         if (!Exists(src_ / (name + ".cpp")))
-            return Fail("Translating the game's code", ToolName(recipe_, "xbe_recomp") + " did not write " + name + ".cpp", HintFor(layout_, false, 0, true));
+            return Fail("Translating the game's code", ToolName(recipe_, "xbe_recomp") + " did not write " + name + ".cpp", HintFor(layout_, recipe_, false, 0, true));
     for (const char* f : {"x86_recomp_shared.h", "image_symbols.h", "exports.def", "imports.def"})
-        if (!Exists(src_ / f)) return Fail("Translating the game's code", ToolName(recipe_, "xbe_recomp") + " did not write " + f, HintFor(layout_, false, 0, true));
+        if (!Exists(src_ / f)) return Fail("Translating the game's code", ToolName(recipe_, "xbe_recomp") + " did not write " + f, HintFor(layout_, recipe_, false, 0, true));
     // the image the disc gave must be the one this executable was made for, or the DLL would be refused after all that compiling
     std::string image = ImageStampOf(ReadText(src_ / "image_symbols.h"));
     if (image != recipe_.image_stamp) {
         run_.Note("image: the sources say \"" + image + "\", this program expects \"" + recipe_.image_stamp + "\"");
         return Fail("Translating the game's code", "the game on the disc is not the release this program was made for",
-                    "Use the US release's disc image. If it is, this program and the compiler files may not belong together: extract the whole zip "
-                    "again, and if it still fails keep logs\\compile.log (it says what the sources claimed and what was expected).");
+                    recipe_.target == Target::MachO
+                        ? "Use the US release's disc image. If it is, the app and its compiler folder may not belong together: download the game again, "
+                          "and if it still fails keep logs/compile.log (it says what the sources claimed and what was expected)."
+                        : "Use the US release's disc image. If it is, this program and the compiler files may not belong together: extract the whole zip "
+                          "again, and if it still fails keep logs\\compile.log (it says what the sources claimed and what was expected).");
     }
     return true;
 }
@@ -513,7 +523,7 @@ bool Builder::Compile() {
             int id = run_.Start(ToolPath(layout_, recipe_, "clang"), args, work_, why);
             if (!id) {
                 stop();
-                return Fail("Compiling " + job.name + ".cpp", ToolName(recipe_, "clang") + " could not be started (" + why + ")", HintFor(layout_, true, 0, false));
+                return Fail("Compiling " + job.name + ".cpp", ToolName(recipe_, "clang") + " could not be started (" + why + ")", HintFor(layout_, recipe_, true, 0, false));
             }
             running[id] = &job;
         }
@@ -530,14 +540,14 @@ bool Builder::Compile() {
         if (ended.code != 0) {
             run_.Note("clang " + job.name + ".cpp: " + ExitText(ended.code));
             stop();
-            return Fail("Compiling " + job.name + ".cpp", ToolName(recipe_, "clang") + " failed (" + ExitText(ended.code) + ")", HintFor(layout_, false, ended.code, false));
+            return Fail("Compiling " + job.name + ".cpp", ToolName(recipe_, "clang") + " failed (" + ExitText(ended.code) + ")", HintFor(layout_, recipe_, false, ended.code, false));
         }
         // an object is written beside its name and moved there once whole: a closed window loses only files in progress. A
         // scanner may hold the new file for a moment, so a move that fails is tried a few times.
         fs::path temp = fs::path(job.object).concat(".tmp");
         if (!Exists(temp) || SizeOf(temp) == 0) {
             stop();
-            return Fail("Compiling " + job.name + ".cpp", ToolName(recipe_, "clang") + " ended well but its output is gone", HintFor(layout_, false, 0, true));
+            return Fail("Compiling " + job.name + ".cpp", ToolName(recipe_, "clang") + " ended well but its output is gone", HintFor(layout_, recipe_, false, 0, true));
         }
         std::error_code ec;
         for (int attempt = 0; attempt < 20; attempt++) {
@@ -547,7 +557,7 @@ bool Builder::Compile() {
         }
         if (ec) {
             stop();
-            return Fail("Saving " + job.object.filename().string(), ec.message(), HintFor(layout_, true, 0, false));
+            return Fail("Saving " + job.object.filename().string(), ec.message(), HintFor(layout_, recipe_, true, 0, false));
         }
         std::string key = job.key + "\n";
         if (!WriteFile(job.key_file, key.data(), key.size())) {
@@ -602,11 +612,12 @@ bool Builder::Install() {
     const bool read = recipe_.target == Target::MachO ? macho::ReadExportedText(staged, "X86GameCodeStamp", found, why)
                                                       : pe::ReadExportedText(staged, "X86GameCodeStamp", found, why);
     if (!read)
-        return Fail("Checking " + recipe_.library, "the linked file " + why, HintFor(layout_, false, 0, true));
+        return Fail("Checking " + recipe_.library, "the linked file " + why, HintFor(layout_, recipe_, false, 0, true));
     if (found != recipe_.stamp) {
         run_.Note("stamp: built \"" + found + "\", expected \"" + recipe_.stamp + "\"");
         return Fail("Checking " + recipe_.library, "the new file is not for this program (its stamp differs)",
-                    "The compiler files and this program may not belong together: extract the whole zip again.");
+                    recipe_.target == Target::MachO ? "The compiler files and this app may not belong together: download the game again."
+                                                    : "The compiler files and this program may not belong together: extract the whole zip again.");
     }
     fs::path final_dll = layout_.Build() / recipe_.library;
     std::error_code ec;
@@ -618,7 +629,7 @@ bool Builder::Install() {
     if (ec)
         return Fail("Saving " + recipe_.library, ec.message(),
                     "If the game is running, close it and start it again. Otherwise antivirus software may be holding the file. " +
-                        HintFor(layout_, false, 0, false));
+                        HintFor(layout_, recipe_, false, 0, false));
     fs::remove_all(layout_.Build() / "new", ec);
     WriteFile(layout_.Build() / (recipe_.library + ".stamp"), (found + "\n").data(), found.size() + 1);
     run_.Note("built: " + U8(final_dll) + " (" + std::to_string(SizeOf(final_dll)) + " bytes), stamp \"" + found + "\"");
@@ -723,8 +734,14 @@ std::string Blocker(const Layout& layout, const Recipe& recipe, bool translate) 
                   c / "include" / "freestanding" / "cstdint", c / "xdk" / "4432" / "layout.toml"};
     }
     for (const fs::path& f : needed)
-        if (!Exists(f))
+        if (!Exists(f)) {
+            if (recipe.target == Target::MachO) {  // the app's own folder: nothing is extracted, the player has the app again by downloading it
+                std::error_code ec;
+                const std::string what = fs::is_directory(c, ec) ? "compiler/" + U8(f.lexically_relative(c)) : std::string("compiler/");
+                return "The app is incomplete: " + what + " is missing. Download the game again.";
+            }
             return "The compiler folder is missing " + U8(f.filename()) + " (" + U8(c) + "). Extract the whole zip again, keeping its folders together, then start the game.";
+        }
     std::error_code ec;
     fs::create_directories(layout.Work(), ec);
     fs::create_directories(layout.Build(), ec);

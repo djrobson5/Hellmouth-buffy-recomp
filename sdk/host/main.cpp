@@ -6,6 +6,7 @@
 #include <crt_externs.h>
 #include <fcntl.h>
 #include <pwd.h>
+#include <sys/file.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -289,7 +290,8 @@ std::filesystem::path DataDir() {
     return dir;
 }
 // What ships with the program and is only read: the compiler folder of the first start and the pictures an app carries. Beside the
-// executable, or in an app, Contents/Resources (so that Contents/MacOS holds the one executable): sdk/host/bundle.sh puts compiler/ there.
+// executable, or in an app, Contents/Resources (so that Contents/MacOS holds the one executable). sdk/host/bundle.sh does not put compiler/
+// there yet (that is milestone M5, the release's packaging): an app made by it today has none, and the first start says so (Blocker).
 std::filesystem::path AppFolder() {
     static const std::filesystem::path dir = InApp() ? ExeDir().parent_path() / "Resources" : ExeDir();
     return dir;
@@ -391,7 +393,13 @@ void Fail(int code, const std::wstring& message) {
         std::fflush(stderr);
         std::error_code ec;
         std::filesystem::create_directories(LogFolder(), ec);
-        std::ofstream(LogFolder() / "compile.log", std::ios::binary | std::ios::trunc) << "FAILED: " << text << "\n";
+        const std::filesystem::path log = LogFolder() / "compile.log";
+        // compile.log is a build's, written over only while its lock is held (first_start.cpp's BuildLock, the same file): when the lock is
+        // taken, a build in another copy has the log open and this line is added to its end. No lock file: no build has run here.
+        int lock = open((DataDir() / "cache" / "game-code.lock").c_str(), O_RDWR | O_CLOEXEC);
+        const bool owned = lock < 0 || flock(lock, LOCK_EX | LOCK_NB) == 0;
+        std::ofstream(log, std::ios::binary | (owned ? std::ios::trunc : std::ios::app)) << "FAILED: " << text << "\n";
+        if (lock >= 0) close(lock);  // the lock goes with it
     }
     // SDL's message boxes are the first thread's, and guest threads fail too: this waits for it to show one
     if (!Args().no_dialogs)
@@ -459,11 +467,51 @@ void HandoverStarting() {
     setenv(kPlaceEnv, place.c_str(), 1);
 }
 
+namespace {
+// The next instance is opened by Launch Services, with `/` as its folder: a relative path of this one's command line would mean something
+// else there. The options that name a place (Args() takes them the same way) go on as absolute paths. A start with no data folder named
+// stays that way: --data and RECOMPLAUNCHER_DATA are not added (they would switch an app to the Windows layout).
+std::vector<std::string> AbsoluteArguments(int argc, char** argv) {
+    static const char* const kPlaces[] = {"--game", "--config", "--textures", "--log", "--saves", "--shader-cache", "--screenshots", "--data", "--game-code"};
+    auto absolute = [](const std::string& value) {
+        std::error_code ec;
+        std::filesystem::path path = std::filesystem::absolute(value, ec);
+        return ec || value.empty() ? value : path.string();
+    };
+    std::vector<std::string> out;
+    for (int i = 1; i < argc; i++) {
+        std::string a = argv[i];
+        if (a.rfind("--", 0) != 0) {
+            // an argument without dashes is the game, unless the option before it took it as its value (Args())
+            out.push_back(a.rfind("-psn_", 0) == 0 ? a : absolute(a));
+            continue;
+        }
+        const size_t eq = a.find('=');
+        const std::string name = a.substr(0, eq);
+        bool place = false;
+        for (const char* p : kPlaces) place = place || name == p;
+        const bool takes_value = place || name == "--instance";
+        if (eq != std::string::npos) {
+            out.push_back(place ? name + "=" + absolute(a.substr(eq + 1)) : a);
+        } else if (takes_value && i + 1 < argc) {
+            out.push_back(a);
+            out.push_back(place ? absolute(argv[++i]) : std::string(argv[++i]));
+        } else {
+            out.push_back(a);
+        }
+    }
+    return out;
+}
+}  // namespace
+
 int HandoverOpen(const std::string& exe) {
-    char** argv = *_NSGetArgv();
-    std::vector<std::string> args;
-    for (int i = 1; argv[i]; i++) args.push_back(argv[i]);
-    return host::OpenInstance(exe, args);
+    // a relative RECOMPLAUNCHER_DATA, set by whoever started this one, goes on as an absolute path (and is not set when it was not)
+    if (const char* data = std::getenv("RECOMPLAUNCHER_DATA"); data && *data && data[0] != '/') {
+        std::error_code ec;
+        const std::filesystem::path path = std::filesystem::absolute(data, ec);
+        if (!ec) setenv("RECOMPLAUNCHER_DATA", path.c_str(), 1);
+    }
+    return host::OpenInstance(exe, AbsoluteArguments(*_NSGetArgc(), *_NSGetArgv()));
 }
 
 void HandoverFinished(int pid) {
@@ -697,13 +745,17 @@ void Event(const SDL_Event& e, bool& redraw) {
 // the arguments it carries over are the ones the app started with. <data>/disc_image.txt, as on Windows.
 std::filesystem::path KeptGameFile() { return app::DataDir() / "disc_image.txt"; }
 
-std::filesystem::path TakeKeptGame() {
+std::filesystem::path ReadKeptGame() {
     std::string path;
     std::ifstream f(KeptGameFile());
     std::getline(f, path);
+    return path;
+}
+
+// the kept path no longer works (moved, deleted, another release): it is asked about again
+void ForgetKeptGame() {
     std::error_code ec;
     std::filesystem::remove(KeptGameFile(), ec);
-    return std::filesystem::is_regular_file(path, ec) ? std::filesystem::path(path) : std::filesystem::path();
 }
 
 void KeepGame(const std::filesystem::path& path) {
@@ -750,8 +802,20 @@ bool ChooseDisc(app::GameFiles& game) {
     const bool ask = !Args().no_dialogs && !Args().prepare && !Args().relaunched;
     const bool keep_game = Args().game.empty() && (InApp() || !Args().data.empty());
     if (keep_game) {
-        g_args.game = TakeKeptGame();
-        if (g_args.game.empty() && ask) g_args.game = PickGame();
+        // the kept path is forgotten only when the game is not found there (as on Windows, game_choice.cpp): a start that ends for another
+        // reason first (a failed build) leaves it for the next one
+        if (std::filesystem::path kept = ReadKeptGame(); !kept.empty()) {
+            GameSearch search;
+            if (FindGameFrom(kept, game, search)) {
+                LOGR("Game: %s, as chosen before", kept.string().c_str());
+                g_args.game = kept;
+                return true;
+            }
+            LOGW("disc image: %s no longer works: %ls", kept.string().c_str(), search.problem.c_str());
+            ForgetKeptGame();
+            if (!ask) Fail(search.code ? search.code : kExitNoGame, search.problem.empty() ? std::wstring(kGame.missing) : search.problem);
+        }
+        if (ask) g_args.game = PickGame();
         if (g_args.game.empty() && ask) {
             LOGR("Exit: no disc image chosen");
             logx::Flush();
