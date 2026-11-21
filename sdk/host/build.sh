@@ -78,8 +78,11 @@ if [ -n "$MAC_DEPS" ]; then
     export MACOSX_DEPLOYMENT_TARGET=13.0
     mkdir -p "$OUT/Frameworks"
     for l in libSDL3.0.dylib libMoltenVK.dylib; do cmp -s "$MAC_DEPS/lib/$l" "$OUT/Frameworks/$l" || { cp -fL "$MAC_DEPS/lib/$l" "$OUT/Frameworks/$l"; chmod u+w "$OUT/Frameworks/$l"; }; done
-    export HOST_OPT=-O2 HOST_FLAGS="-mmacosx-version-min=13.0 -I$MAC_DEPS/include -I$HERE -I$MAC_DEPS/include/glslang -I$IMGUI -DXBE_HOST_VULKAN -DIMGUI_IMPL_VULKAN_NO_PROTOTYPES$HOST_EXTRA"
-    export LINK_FLAGS="-mmacosx-version-min=13.0 -L$MAC_DEPS/lib -lSDL3 -Wl,-rpath,@executable_path/Frameworks -Wl,-headerpad_max_install_names -framework AppKit -framework QuartzCore -framework CoreGraphics -framework Foundation -lglslang -lSPIRV -lglslang-default-resource-limits -lSPIRV-Tools-opt -lSPIRV-Tools$LINK_EXTRA"
+    # A release holds nothing that names this machine: the sources' paths (the __FILE__ of the log macros, and the debug information) are made
+    # relative to the repository, and the link leaves out the debug map (-Wl,-S: the .o files' paths, one entry each). The executable finds the
+    # libraries in Frameworks beside it, or in Contents/Frameworks when it is in an app (tools/package_mac.sh), by the one build.
+    export HOST_OPT=-O2 HOST_FLAGS="-mmacosx-version-min=13.0 -ffile-prefix-map=$(realpath "$REPO")=. -ffile-prefix-map=$MAC_DEPS=/deps -I$MAC_DEPS/include -I$HERE -I$MAC_DEPS/include/glslang -I$IMGUI -DXBE_HOST_VULKAN -DIMGUI_IMPL_VULKAN_NO_PROTOTYPES$HOST_EXTRA"
+    export LINK_FLAGS="-mmacosx-version-min=13.0 -L$MAC_DEPS/lib -lSDL3 -Wl,-rpath,@executable_path/Frameworks -Wl,-rpath,@executable_path/../Frameworks -Wl,-S -Wl,-headerpad_max_install_names -framework AppKit -framework QuartzCore -framework CoreGraphics -framework Foundation -lglslang -lSPIRV -lglslang-default-resource-limits -lSPIRV-Tools-opt -lSPIRV-Tools$LINK_EXTRA"
 else
     export HOST_OPT=-O2 HOST_FLAGS="$(pkg-config --cflags sdl3) -I$HERE -I$BREW/include -I$BREW/include/glslang -I$IMGUI -DXBE_HOST_VULKAN -DIMGUI_IMPL_VULKAN_NO_PROTOTYPES$HOST_EXTRA"
     export LINK_FLAGS="$(pkg-config --libs sdl3) -L$BREW/lib -Wl,-rpath,$BREW/lib -Wl,-headerpad_max_install_names -framework AppKit -framework QuartzCore -framework CoreGraphics -framework Foundation -lglslang -lSPIRV -lglslang-default-resource-limits$LINK_EXTRA"

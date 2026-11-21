@@ -5,7 +5,9 @@
 #   the output of tools/mac/build_toolchain.sh and build_libs.sh (default ~/Projects/toolchains/mac-deps): bin/clang, bin/ld64.lld, lib/*.dylib,
 #       and the static libraries lib/*.a; its licenses/ are the ones checked
 #   a build of sdk/host/build.sh (a folder with the executable, or a .app): the executable, Frameworks/*.dylib, compiler/clang,
-#       compiler/ld64.lld, compiler/xbe_recomp, compiler/buffy_config, build/*.dylib (the game code); the licences are <folder>/licenses, or the second argument, or $MAC_DEPS/licenses
+#       compiler/ld64.lld, compiler/xbe_recomp, compiler/buffy_config, build/*.dylib (the game code); the licences are <folder>/licenses, or the second argument, or $MAC_DEPS/licenses.
+#       In a .app (tools/package_mac.sh) the files are Contents/MacOS/<NAME>, Contents/Frameworks/*.dylib and Contents/Resources/compiler/*, and the licences
+#       Contents/Resources/licenses/<component>/
 # For each Mach-O that would ship: arm64; every minos 13.0 or lower (every slice); it loads only /usr/lib/*, /System/*, and @rpath/,
 # @executable_path/ and @loader_path/ names, each @rpath one a file that is shipped; its search paths (LC_RPATH) are all @-relative; nothing
 # names /opt/homebrew or /usr/local, and no /opt/homebrew string is inside it; it is signed (ad hoc is enough). Licences: each component the files come from has its licence and a
@@ -26,12 +28,13 @@ if [ -x "$D/bin/clang" ] || [ -d "$D/lib" ]; then
     libdirs=("$D/lib"); need=(llvm sdl3 moltenvk glslang spirv-tools spirv-headers vulkan-headers)
 else
     LAYOUT=app
-    if [[ "$D" == *.app ]]; then X=$D/Contents/MacOS; FW=$D/Contents/Frameworks; else X=$D; FW=$D/Frameworks; fi
-    LIC=${2:-}; [ -z "$LIC" ] && [ -d "$D/licenses" ] && LIC=$D/licenses; [ -z "$LIC" ] && [ -n "${MAC_DEPS:-}" ] && LIC=$MAC_DEPS/licenses
+    if [[ "$D" == *.app ]]; then X=$D/Contents/MacOS; FW=$D/Contents/Frameworks; CD=$D/Contents/Resources/compiler; LD=$D/Contents/Resources/licenses
+    else X=$D; FW=$D/Frameworks; CD=$D/compiler; LD=$D/licenses; fi
+    LIC=${2:-}; [ -z "$LIC" ] && [ -d "$LD" ] && LIC=$LD; [ -z "$LIC" ] && [ -n "${MAC_DEPS:-}" ] && LIC=$MAC_DEPS/licenses
     [ -f "$X/$NAME" ] && files+=("$X/$NAME")
-    for f in "$FW"/*.dylib "$D"/compiler/clang "$D"/compiler/ld64.lld "$D"/compiler/xbe_recomp "$D"/compiler/buffy_config "$D"/build/*.dylib; do [ -f "$f" ] && [ ! -L "$f" ] && files+=("$f"); done
+    for f in "$FW"/*.dylib "$CD"/clang "$CD"/ld64.lld "$CD"/xbe_recomp "$CD"/buffy_config "$D"/build/*.dylib; do [ -f "$f" ] && [ ! -L "$f" ] && files+=("$f"); done
     libdirs=("$FW" "$X"); need=(sdl3 moltenvk glslang spirv-tools)
-    [ -f "$D/compiler/clang" ] && need+=(llvm)
+    [ -f "$CD/clang" ] && need+=(llvm)
     [ -f "$X/$NAME" ] || echo "FAIL  no executable $X/$NAME"
     [ -f "$X/$NAME" ] || fail=1
 fi

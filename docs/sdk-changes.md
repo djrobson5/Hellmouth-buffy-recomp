@@ -204,9 +204,14 @@ What this port changed:
   `--option=value`, `--print-paths`. `app::AppFolder` is where the compiler folder is (beside the exe; in an app `Contents/Resources`). The
   achievement pictures and the icon are read from the data folder first (`ach::` icons, the Dock icon from `Buffy.png`). `sdk/host/game_code_dylib.sh`
   also builds `xbe_recomp`, `buffy_config` and `sdk_names.txt` into `<out>/compiler`. `tools/mac/sim_first_start_mac.sh` plays it with no window.
-  `sdk/host/bundle.sh` does not put `compiler/` into an app yet (milestone M5); until then an app's first start stops with "The app is incomplete".
+  `sdk/host/bundle.sh` (the old installer's) does not put `compiler/` into an app, so an app made by it stops at its first start with "The app is incomplete"; `tools/package_mac.sh` makes the Mac release's app (milestone M5).
   The build's programs run in process groups of their own, and are ended with their groups on a stop (SIGTERM and SIGINT cancel the build, with the
   window or under `--prepare`); a build killed with SIGKILL leaves its programs listed in `cache/game-code.children`, which the next build (holding
   `cache/game-code.lock`) ends before it starts. Never point `--data` or `RECOMPLAUNCHER_DATA` at `~/Library/Application Support/Buffy` for an
   existing install: a data folder named gives the Windows layout, and `achievements.txt` is then looked for in the folder itself, not in `logs/`, so the
   earned achievements of the app's own layout would not be found.
+- The Mac release (`tools/package_mac.sh`, milestone M5): with `MAC_DEPS` the executable is built with `-ffile-prefix-map` (the repository's path and
+  `MAC_DEPS`'s are made relative: no `__FILE__` or debug path names the build machine), the link takes `-Wl,-S` (no debug map: one entry per object
+  file, each with this machine's path) and a second search path, `@executable_path/../Frameworks`, so that the one built executable finds its
+  libraries beside it (`<out>/Frameworks`) and in an app (`Contents/Frameworks`) (`sdk/host/build.sh`); the tools `game_code_dylib.sh` builds
+  get the same prefix map. `tools/mac/check_mac_deps.sh` reads an app's `Contents/Resources/compiler` and `licenses`.

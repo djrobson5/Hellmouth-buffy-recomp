@@ -3,9 +3,9 @@
 #   -r repo   -g generated folder of the image   -o out folder   -n exe name
 # Makes <out>/compiler, laid out as the first start finds its tools (app/game_build.h, Layout::Compiler), and builds the dylib from the
 # generated sources with the first start's own build code (tools/first_start_check.cpp --sources over app/game_build.cpp). <out> is then
-# what a release holds beside the executable (the Windows release's counterpart, tools/package_windows.sh). Packaging it as an app is
-# sdk/host/bundle.sh's, which does not do it yet (milestone M5): then <out>/compiler is to go to Buffy.app/Contents/Resources/compiler
-# (app::AppFolder in sdk/host/main.cpp). What <out>/compiler holds:
+# what a release holds beside the executable (the Windows release's counterpart, tools/package_windows.sh). tools/package_mac.sh makes the
+# app of it: <out>/compiler goes to Buffy.app/Contents/Resources/compiler (app::AppFolder in sdk/host/main.cpp). (sdk/host/bundle.sh is the
+# old installer's, for the Homebrew build, and does not do it.) What <out>/compiler holds:
 #   compiler/clang, compiler/ld64.lld   scripts that run the llvm-mingw toolchain at $LLVM_MINGW (default ~/Projects/toolchains/llvm-mingw),
 #                                       which is built from source (its lld has the Mach-O port); a release carries its own copies.
 #                                       With MAC_DEPS=<folder> (tools/mac/build_toolchain.sh): copies of its bin/clang and bin/ld64.lld,
@@ -63,11 +63,13 @@ fi
 mkdir -p "$CODE"
 T=$CODE/tools
 TARGET_FLAG=; [ -n "$MAC_DEPS" ] && TARGET_FLAG=-DCMAKE_OSX_DEPLOYMENT_TARGET=13.0
+# for a release: no path of this machine in them (an assert's or a log's __FILE__, debug information); their sources are all under the repository
+PATH_FLAGS=(); [ -n "$MAC_DEPS" ] && PATH_FLAGS=("-DCMAKE_CXX_FLAGS=-ffile-prefix-map=$REPO=." "-DCMAKE_C_FLAGS=-ffile-prefix-map=$REPO=.")
 FETCHED=()
 for dep in zydis tomlplusplus; do
     [ -d "$REPO/build/tools/_deps/$dep-src" ] && FETCHED+=("-DFETCHCONTENT_SOURCE_DIR_$(echo "$dep" | tr a-z A-Z)=$REPO/build/tools/_deps/$dep-src")
 done
-cmake -S "$REPO/tools" -B "$T" -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 ${TARGET_FLAG:+"$TARGET_FLAG"} ${FETCHED[@]+"${FETCHED[@]}"} > "$CODE/tools-cmake.log" 2>&1 ||
+cmake -S "$REPO/tools" -B "$T" -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 ${TARGET_FLAG:+"$TARGET_FLAG"} ${PATH_FLAGS[@]+"${PATH_FLAGS[@]}"} ${FETCHED[@]+"${FETCHED[@]}"} > "$CODE/tools-cmake.log" 2>&1 ||
     { tail -20 "$CODE/tools-cmake.log" >&2; exit 1; }
 cmake --build "$T" -j "$JOBS" --target xbe_recomp buffy_config buffy_config_names > "$CODE/tools-build.log" 2>&1 || { tail -20 "$CODE/tools-build.log" >&2; exit 1; }
 rm -f "$C/xbe_recomp" "$C/buffy_config" "$C/sdk_names.txt"
