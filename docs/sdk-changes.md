@@ -40,6 +40,7 @@ What this port changed:
     listed in `game_code/abi_inputs.txt`) and `sdk/tools/recomp` writes the rest: `IMAGE_CODE_STAMP` in `image_symbols.h`, and the
     stamp in `x86_func_mapping.cpp` (compiled only for the DLL), which needs `-DXBE_GAME_CODE_ABI=<token>`.
   - `sdk/tools/LLVM-LICENSE.txt`: the licence text for the clang and lld the first start runs.
+  - `sdk/tools/tool.manifest`: the manifest the Windows command line tools carry (UTF-8 command line and file names, long paths).
   - `sdk/cmake/XbeRecomp.cmake`: `XBE_GAME_CODE_DLL` leaves the generated sources out of the executable, gives it the import library, the
     delay loading and the module definition file, and adds the `game_code_dll` target, which builds the DLL with the first start's
     commands for checking. The flags are in one place, written to `game_code_flags.h` for the executable.

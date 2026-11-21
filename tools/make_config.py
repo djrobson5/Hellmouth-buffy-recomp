@@ -7,6 +7,9 @@ override then has nothing to catch, and the code that needed it shows up in the 
 The evidence for the values is in docs/xdk-4432.md.
 
     make_config.py [--map assets/final.map] [--out config/game.toml] [--sdk sdk]
+
+tools/buffy_config/main.cpp is this program in C++, for the player's PC (no Python there), and must write the same bytes:
+tools/check_config_tool.sh compares them. A change here is a change there.
 """
 import argparse
 import glob

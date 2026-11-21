@@ -112,6 +112,18 @@ tools/check_game_code_dll.sh                             # the exe and the DLL l
 tools/sim_first_start.sh                                 # the first start's commands, in a folder with a space and an accent
 ```
 
+The first start runs a config tool as well as the recompiler:
+
+```sh
+cmake --build build/tools --target buffy_config buffy_config_names   # the config tool, and the names it binds (tools/regen.sh builds xbe_recomp there)
+tools/check_config_tool.sh                               # buffy_config against make_config.py on the local assets, byte for byte
+```
+
+`buffy_config` is `tools/make_config.py` in C++ (it must write the same file; `tools/regen.sh` still runs the Python), so that the
+player's PC can make `config/game.toml` from the `final.map` and `Default.xbe` on their own disc. `make_config.py` found the names of
+the SDK's functions the config binds by reading `sdk/runtime`, which the player's PC does not have: `buffy_config --scan-sdk` finds
+them at build time, into `sdk_names.txt`, which goes beside the program.
+
 `XBE_USE_GENERATED` (set by the preset) builds from `generated/game` as it is, rather than running the recompiler, which would
 be a Windows program that can't run here. `XBE_GAME_CODE_DLL` (also set by it) builds the game's code as `Buffy.dll` and leaves
 it out of the executable; with it off, the code is linked into the executable as on the Mac. On Windows, the `release` preset
@@ -279,7 +291,7 @@ other settings, including pad scripts.
 | `sdk/xdk/4432/layout.toml` | This XDK's data layouts, each value with the instruction that proves it |
 | `src/` | The game's side of the port: the achievement list, the hooks, widescreen, the Extras additions |
 | `install.sh` | The installer: the steps under "Building it by hand", with checks |
-| `tools/` | `regen.sh`; `make_config.py` writes the recompiler's input; `disasm.py` disassembles by name; `coverage.py` reports what the game calls in the libraries; `check_game_code_dll.sh` and `sim_first_start.sh` check the Windows build (see "Cross-building for Windows") |
+| `tools/` | `regen.sh`; `make_config.py` writes the recompiler's input, and `buffy_config/` (C++) does the same for the Windows first start, checked against it by `check_config_tool.sh`; `disasm.py` disassembles by name; `coverage.py` reports what the game calls in the libraries; `check_game_code_dll.sh` (with `library_calls.cpp`) and `sim_first_start.sh` check the Windows build (see "Cross-building for Windows") |
 | `docs/xdk-4432.md` | How this game differs from what the SDK expected, and the evidence |
 | `assets/`, `config/game.toml`, `generated/`, `build/` | Not in the repository: the game's files, what's derived from them, and build output |
 
