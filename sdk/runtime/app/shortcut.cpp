@@ -1,7 +1,8 @@
 // A shortcut to the game beside the executable ("<title>.lnk": target the executable, working folder its folder, the icon the first start
 // made from the player's disc, <data>\Buffy.ico, else the executable's own, and the --data argument if one was given), made or brought up
-// to date at each normal start. A .lnk holds absolute paths, so one that was made before the folder was moved says where the game used to
-// be: it is written again when what it holds differs from what this start knows, and left alone when it does not.
+// to date at each normal start (not one that RecompLauncher makes: it has shortcuts of its own). A .lnk holds absolute paths, so one that
+// was made before the folder was moved says where the game used to be: it is written again when what it holds differs from what this
+// start knows, and left alone when it does not.
 //
 // Windows only, and not checked on a Mac. Best effort: a folder that cannot be written to, or a COM call that fails, is a line in the log
 // and nothing else. It writes only that one file, beside the executable: nothing on the Desktop or in the Start menu, and the shortcut is
@@ -64,11 +65,26 @@ bool Holds(IShellLinkW* link, const Wanted& want) {
            icon_index == want.icon_index;
 }
 
+// RECOMPLAUNCHER=1: RecompLauncher started the game (it sets this for every game it starts)
+bool StartedByRecompLauncher() {
+    wchar_t value[4];
+    const DWORD n = GetEnvironmentVariableW(L"RECOMPLAUNCHER", value, DWORD(sizeof(value) / sizeof(value[0])));
+    return n == 1 && value[0] == L'1';
+}
+
 }  // namespace
 
 void UpdateShortcut() {
-    // a restart for a level and a launcher's start are not the player starting the game
-    if (Args().relaunched || Args().no_dialogs) return;
+    // a restart for a level is not the player starting the game
+    if (Args().relaunched) return;
+    // RecompLauncher has shortcuts of its own, so the file beside the executable would only be one more to find. Asked before
+    // --no-dialogs, which the launcher passes too, so that its start says why in the log.
+    if (StartedByRecompLauncher()) {
+        LOGR("shortcut: not made, RecompLauncher started the game");
+        return;
+    }
+    // a launcher's start is not the player starting the game
+    if (Args().no_dialogs) return;
     const fs::path exe = ExePath();
     // IShellLinkW holds MAX_PATH characters and no \\?\ paths: a shortcut to such a folder would be cut or refused, so none is made
     if (exe.native().rfind(L"\\\\?\\", 0) == 0 || exe.native().size() >= MAX_PATH) {

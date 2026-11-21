@@ -166,6 +166,7 @@ enum ExitCode : int {
     kExitNoGameCode = 7,    // the recompiled game code (the DLL beside the executable) is missing or will not load
     kExitStaleGameCode = 8, // the DLL is there but was built for another version of this executable or of the game
     kExitBuildFailed = 9,   // --prepare: the game's code could not be built (the reason is on stderr and in logs\compile.log)
+    kExitBootFailed = 10,   // the game's boot failed after everything else was in place (the reason is in the log)
 };
 // logs the reason, shows it unless --no-dialogs, and ends the process with code
 [[noreturn]] void Fail(int code, const std::wstring& message);
@@ -237,7 +238,8 @@ int Instance();  // Args().instance
 void* Window();  // HWND
 // Windows: the window's big and small icon from <data>\Buffy.ico, the one the first start made from the disc (window_icon.cpp); nothing if there is none
 void SetWindowIcons(void* window);
-// Windows: "<title>.lnk" beside the executable, made or brought up to date (target, folder, icon, a given --data); best effort, never fatal (shortcut.cpp)
+// Windows: "<title>.lnk" beside the executable, made or brought up to date (target, folder, icon, a given --data); best effort, never fatal (shortcut.cpp).
+// None for a restart for a level, a start with --no-dialogs, or one RecompLauncher made (RECOMPLAUNCHER=1 in the environment).
 void UpdateShortcut();
 void* MetalLayer();  // not Windows: the window's CAMetalLayer, null when the window has none (the renderer draws into it)
 extern std::atomic<uint32_t> g_pixel_height;  // not Windows: the window's height in the screen's own pixels, for the render scale

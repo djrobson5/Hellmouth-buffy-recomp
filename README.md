@@ -237,7 +237,8 @@ what stops a start: `logs\compile.log` gets a line (`pictures: not made: <reason
 written, and the next start tries again. The game finds the pictures in the data folder (`achievements.cpp`, before the folder beside the
 exe), and sets `Buffy.ico` on its window and the taskbar (`window_icon.cpp`; without it the window keeps the executable's icon).
 
-**The shortcut.** Each normal start (not `--prepare`, `--relaunched` or `--no-dialogs`), once the game's code and the pictures are in place,
+**The shortcut.** Each normal start (not `--prepare`, `--relaunched`, `--no-dialogs`, or one RecompLauncher made, which sets `RECOMPLAUNCHER=1` and has
+shortcuts of its own: the log says `shortcut: not made, RecompLauncher started the game`), once the game's code and the pictures are in place,
 makes `Buffy the Vampire Slayer.lnk` beside `Buffy.exe` or brings it up to date (`sdk/runtime/app/shortcut.cpp`, `IShellLinkW` and
 `IPersistFile`): target the executable, working folder its folder, icon `<data>\Buffy.ico` (the executable's own icon when the pictures were
 not made), and `--data "<folder>"` when the data folder is not the exe's (from `--data` or `RECOMPLAUNCHER_DATA`). A `.lnk` holds absolute paths, so the file is read (never resolved) and written

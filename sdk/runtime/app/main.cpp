@@ -541,9 +541,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         LOGR("system: the game's threads on one core (mask %llX)", (unsigned long long)m);
     }
     if (!kernel::Boot(std::move(game.xbe), IMAGE_XBE, game.dir.string(), app::SavesDir().string())) {
-        MessageBoxW(app::g_hwnd, L"The game failed to start, see the log in the logs folder.", app::kGame.short_title,
-                    MB_ICONERROR);
-        return 1;
+        // as app::Fail: the log and an exit code, and the box only without --no-dialogs (still over the game window)
+        LOGE("Exit (%d): the game failed to start", app::kExitBootFailed);
+        logx::Flush();
+        if (!app::Args().no_dialogs)
+            MessageBoxW(app::g_hwnd, L"The game failed to start, see the log in the logs folder.", app::kGame.short_title,
+                        MB_ICONERROR);
+        return app::kExitBootFailed;
     }
 
     MSG msg;
