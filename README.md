@@ -223,6 +223,15 @@ what stops a start: `logs\compile.log` gets a line (`pictures: not made: <reason
 written, and the next start tries again. The game finds the pictures in the data folder (`achievements.cpp`, after the folder beside the
 exe), and sets `Buffy.ico` on its window and the taskbar (`window_icon.cpp`; without it the window keeps the executable's icon).
 
+**The shortcut.** Each normal start (not `--prepare`, `--relaunched` or `--no-dialogs`), once the game's code and the pictures are in place,
+makes `Buffy the Vampire Slayer.lnk` beside `Buffy.exe` or brings it up to date (`sdk/runtime/app/shortcut.cpp`, `IShellLinkW` and
+`IPersistFile`): target the executable, working folder its folder, icon `<data>\Buffy.ico` (the executable's own icon when the pictures were
+not made), and `--data "<folder>"` when the start was given one. A `.lnk` holds absolute paths, so the file is read (never resolved) and written
+again when what it holds differs from what the start knows, as it does after the folder was moved; when it already holds the same it is left
+alone. It is best effort: a read only folder or a COM failure is a line in `logs\buffy.log` and the game starts. It writes nothing outside the
+folder of the executable (no Desktop, no Start menu), and the audit refuses a `.lnk` in the zip, as it holds the paths of the machine it was
+made on.
+
 **The executable's own icon** (what Explorer shows for `Buffy.exe`, and the window's until `Buffy.ico` is there) is not made from the game: it is
 a plain letter H in white on dark purple, an original design drawn by `tools/make_exe_icon.py` into `resources/exe_icon.ico`, which is
 committed. The game sets it with the CMake variable `XBE_ICON` (root `CMakeLists.txt`), and `sdk/cmake/XbeRecomp.cmake` puts it in the

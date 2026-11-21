@@ -8,7 +8,7 @@ machine it was built on. Run by tools/package_windows.sh; fails (exit 1) on the 
 What it checks:
   1. the files are exactly the allowed ones (a list below): nothing else, and none missing; every file is listed with its size
   2. none has a name of a game derived file (generated code, config/game.toml, assets, the DLL, image_symbols.h, the achievement pictures
-     and icon the first start makes from the disc: achievements/, Buffy.ico, Buffy.png, ...)
+     and icon the first start makes from the disc: achievements/, Buffy.ico, Buffy.png, and a .lnk, which holds the paths of the PC it was made on, ...)
   3. none holds the game's code or data: 64 windows of bytes from the code of the DLL the build made, 64 from the game's xbe and 64
      lines of the generated C++ are looked for in every file (a copy of any of them, whole or in part, would hold some)
   4. the headers that ship are the ones the ABI token was computed from (abi_inputs.txt), and the executable's stamp is the DLL's
@@ -49,7 +49,7 @@ REQUIRED = [
 ]
 # names of what is made from the game, wherever they are
 FORBIDDEN_NAMES = re.compile(
-    r"(\.xbe|\.iso|\.xpr|\.pak|\.wma|\.wmv|\.obj|\.o)$|^(final\.map|game\.toml|image_symbols\.h|exports\.def|imports\.def|code\.lib|Buffy\.dll"
+    r"(\.xbe|\.iso|\.xpr|\.pak|\.wma|\.wmv|\.obj|\.o|\.lnk)$|^(final\.map|game\.toml|image_symbols\.h|exports\.def|imports\.def|code\.lib|Buffy\.dll"
     r"|x86_recomp.*|x86_func_mapping.*|disc_image\.txt|abi_inputs\.txt|game_code_flags\.h"
     r"|Buffy\.ico|Buffy\.png|Buffy\.icns|pictures\.stamp|achievements)$", re.I)
 # folders of what the first start makes from the game: nothing may be in them, whatever it is called

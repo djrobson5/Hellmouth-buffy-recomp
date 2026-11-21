@@ -70,7 +70,9 @@ What this port changed:
     runs `buffy_config --pictures` over files it takes from the disc into `<data>`, behind a marker of its own (`<data>\pictures.stamp`, the
     recipe's version, `kPicturesRecipe`), so a start with a current DLL makes them too (`EnsurePictures`, in a normal start and in `--prepare`).
     A picture that cannot be made is a line in `logs\compile.log` and never a failure. `Icon()` looks in the data folder after the folder beside the
-    exe, and `app::SetWindowIcons` (Windows) sets `<data>\Buffy.ico` on the game window.
+    exe, and `app::SetWindowIcons` (Windows) sets `<data>\Buffy.ico` on the game window. `shortcut.cpp` (`app::UpdateShortcut`, Windows, from `main.cpp`
+    after `PrepareGameCode`) keeps `<title>.lnk` beside the exe, with the data folder's icon and a given `--data`, written again when its target or
+    arguments are not this start's.
   - `sdk/tools/LLVM-LICENSE.txt`: the licence text for the clang and lld the first start runs.
   - `sdk/tools/tool.manifest`: the manifest the Windows command line tools carry (UTF-8 command line and file names, long paths).
   - `sdk/cmake/XbeRecomp.cmake`: `XBE_ICON` (an .ico a game sets before `add_xbe_image`) is the executable's icon resource (ICON 1 beside the manifest); a

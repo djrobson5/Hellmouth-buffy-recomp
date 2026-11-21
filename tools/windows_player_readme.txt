@@ -14,7 +14,9 @@ To play
    once, and again only after an update of this download. It needs about 1 GB of free space while it works. When it is done, choose Start
    (or press A on a controller). If you tick "Delete the build files", the working files (about 300 MB) are removed, and the
    next build after an update takes longer.
-   The same first start makes the achievement pictures and the game's icon from your disc (they are not part of this download).
+   The same first start makes the achievement pictures and the game's icon from your disc (they are not part of this download), and
+   a shortcut, "Buffy the Vampire Slayer", beside Buffy.exe that you can copy to your Desktop or pin to the taskbar or Start.
+   The shortcut holds the path of the folder: if you move the folder, start Buffy.exe once and it is made right again.
 4. Next time Buffy.exe starts the game at once.
 
 Your saves, settings and logs

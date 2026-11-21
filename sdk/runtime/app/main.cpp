@@ -498,6 +498,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         return app::kExitOk;
     }
     if (!app::PrepareGameCode(game)) return app::kExitNoGameCode;
+    app::UpdateShortcut();  // beside the exe, with the icon PrepareGameCode has just made if it was not there
 
     bool splash = app::OpenSplash(), handover = app::StartHandover();
 
