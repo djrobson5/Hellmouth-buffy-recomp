@@ -1,4 +1,5 @@
 #ifdef XBE_GAME_CODE_DLL
+#ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -6,6 +7,9 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 #include <cxxabi.h>
 #include <filesystem>
@@ -52,6 +56,16 @@ uint32_t g_entry = X86EntryPoint;
 thread_local X86Resume t_resume{};
 #endif
 
+#if defined(XBE_GAME_CODE_DLL) && defined(__APPLE__)
+// the X86_EXTERN_FUNC slots of this executable (cpu/x86_ops.h), which register at start up; dispatch::Load fills them
+std::vector<std::pair<const char*, X86Func**>>& Externs() {
+    static std::vector<std::pair<const char*, X86Func**>> externs;
+    return externs;
+}
+void* g_dylib = nullptr;
+std::string g_dylib_stamp;
+#endif
+
 struct Export {
     const char* name = nullptr;
     kernel::KernelFn fn = nullptr;
@@ -66,7 +80,7 @@ constexpr uint32_t kKernelThunkBase = 0xFE000000;
 
 namespace dispatch {
 
-#ifdef XBE_GAME_CODE_DLL
+#if defined(XBE_GAME_CODE_DLL) && defined(_WIN32)
 // the game code DLL: its tables come by name, as the delay loaded imports carry only functions. The DLL's imports name the
 // executable (Buffy.exe), so Windows can only bind them when the running executable has that name: LoadLibraryW then fails with
 // "the specified module could not be found", which tells the player nothing, so the name is checked first.
@@ -96,6 +110,54 @@ LoadResult Load(const std::filesystem::path& dll, const std::wstring& exe_name, 
     g_hi = *hi;
     g_entry = *entry;
     return {LoadStatus::Ok, 0, ""};
+}
+#endif
+
+#if defined(XBE_GAME_CODE_DLL) && defined(__APPLE__)
+LoadResult Load(const std::filesystem::path& dylib, const char* stamp) {
+    void* h = dlopen(dylib.c_str(), RTLD_NOW | RTLD_LOCAL);
+    if (!h) {
+        const char* why = dlerror();
+        g_dylib_stamp = why ? why : "";
+        // the loader binds the dylib's undefined names to this executable before anything of the dylib runs: one the executable does
+        // not export is a dylib for another version of it ("symbol not found in flat namespace '_sub_00012345'")
+        const bool unbound = g_dylib_stamp.find("symbol not found") != std::string::npos;
+        return {unbound ? LoadStatus::Stale : LoadStatus::NotLoaded, 0, "", g_dylib_stamp};
+    }
+    g_mappings = reinterpret_cast<const X86FuncMapping*>(dlsym(h, "X86FuncMappings"));
+    g_continuations = reinterpret_cast<const uint32_t*>(dlsym(h, "X86Continuations"));
+    auto* lo = reinterpret_cast<const uint32_t*>(dlsym(h, "X86CodeBase"));
+    auto* hi = reinterpret_cast<const uint32_t*>(dlsym(h, "X86CodeEnd"));
+    auto* entry = reinterpret_cast<const uint32_t*>(dlsym(h, "X86EntryPoint"));
+    if (!g_mappings || !g_continuations || !lo || !hi || !entry) return {LoadStatus::NoTables, 0, "", "the tables are missing"};
+    // as on Windows: a dylib made for another build of this executable binds all the same, and then calls the wrong code
+    const char* dylib_stamp = reinterpret_cast<const char*>(dlsym(h, "X86GameCodeStamp"));
+    if (!dylib_stamp || std::strcmp(dylib_stamp, stamp) != 0) {
+        g_dylib_stamp = dylib_stamp ? dylib_stamp : "";
+        return {LoadStatus::Stale, 0, g_dylib_stamp.c_str()};
+    }
+    // what the executable calls in the dylib (its overrides call the recompiled body they replace): each by name
+    for (auto& [name, slot] : Externs()) {
+        *slot = reinterpret_cast<X86Func*>(dlsym(h, name));
+        if (!*slot) return {LoadStatus::NoTables, 0, "", std::string("the dylib has no ") + name};
+    }
+    g_dylib = h;
+    g_lo = *lo;
+    g_hi = *hi;
+    g_entry = *entry;
+    return {LoadStatus::Ok, 0, ""};
+}
+
+Tables Describe() {
+    Tables t;
+    for (const X86FuncMapping* m = g_mappings; m && m->host; m++) t.functions++;
+    for (const uint32_t* c = g_continuations; c && *c; c++) t.continuations++;
+    t.externs = Externs().size();
+    for (auto& [name, slot] : Externs()) t.externs_filled += *slot != nullptr;
+    t.code_base = g_lo;
+    t.code_end = g_hi;
+    t.entry = g_entry;
+    return t;
 }
 #endif
 
@@ -138,6 +200,13 @@ uint32_t HostThunk(X86Func* fn) {
 uint32_t KernelThunkAddress(uint32_t ordinal) { return kKernelThunkBase + ordinal * 4; }
 
 }  // namespace dispatch
+
+#if defined(XBE_GAME_CODE_DLL) && defined(__APPLE__)
+X86Func* x86_extern_register(const char* name, X86Func** slot) {
+    Externs().push_back({name, slot});
+    return nullptr;
+}
+#endif
 
 void x86_icall(X86Context& ctx, uint8_t* base, uint32_t target) {
     ctx.last_icall = target;

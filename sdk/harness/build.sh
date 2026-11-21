@@ -6,6 +6,8 @@
 #   -G folder for the generated objects (default <out>/gen), shared between builds of the same generated code
 # env: CXX (clang++), JOBS (the core count), ARCH (-march=x86-64-v2 on x86-64; another target's flags for a cross build),
 #      HOST_OPT (-O1) and HOST_FLAGS for the host sources, LINK_FLAGS for the link (sdk/host/build.sh sets them)
+#      NO_GEN=1: the recompiled code is not part of this program (a host that loads it as a dylib, sdk/host/build.sh
+#      --game-code-dylib): the generated sources are not compiled or linked, only their headers are used
 # Leaves out the window, SDL input, XAudio2 and D3D12 parts of the runtime and the sources of the repo's other images
 # (src/<name> for each other folder beside the generated one); the harness supplies their stand ins.
 set -e
@@ -30,9 +32,11 @@ HOST="$BASE ${HOST_OPT:--O1} -g $HOST_FLAGS -I$REPO/src -I$RT -I$GEN -I$H -I$H/c
 
 # generated code, an object rebuilt only when its partition is newer
 export CXX BASE RT GEN GEN_OBJ HOST
-ls "$GEN"/x86_recomp.*.cpp "$GEN"/x86_func_mapping.cpp | xargs -P "$JOBS" -n1 sh -c '
-    o="$GEN_OBJ/$(basename "$0" .cpp).o"; [ "$o" -nt "$0" ] && exit 0
-    $CXX $BASE -O1 -g0 -w -I"$RT" -I"$GEN" -c "$0" -o "$o.tmp" && mv "$o.tmp" "$o"'
+if [ -z "${NO_GEN:-}" ]; then
+    ls "$GEN"/x86_recomp.*.cpp "$GEN"/x86_func_mapping.cpp | xargs -P "$JOBS" -n1 sh -c '
+        o="$GEN_OBJ/$(basename "$0" .cpp).o"; [ "$o" -nt "$0" ] && exit 0
+        $CXX $BASE -O1 -g0 -w -I"$RT" -I"$GEN" -c "$0" -o "$o.tmp" && mv "$o.tmp" "$o"'
+fi
 
 others=$(ls "$GEN/.." | grep -vx "$(basename "$GEN")" | paste -sd'|' - || true)
 SRC=$(ls "$RT"/*/*.cpp | grep -Ev "/runtime/app/|/core/input.cpp|/gpu/d3d12.cpp|/gpu/vk.cpp|/gpu/vk_loader.cpp|/gpu/vk_probe.cpp|/gpu/backend.cpp|/gpu/spirv.cpp|/gpu/upscale.cpp|/audio/xaudio2.cpp")
@@ -55,5 +59,6 @@ done
 if [ ${#stale[@]} -gt 0 ]; then
     printf '%s\n' "${stale[@]}" | xargs -P "$JOBS" -L1 sh -c 'echo "compile $0"; $CXX $HOST -c "$0" -o "$1"'
 fi
-$CXX -o "$OUT/$EXE" "${objs[@]}" "$GEN_OBJ"/*.o -lpthread $LINK_FLAGS
+gen_objs=(); [ -z "${NO_GEN:-}" ] && gen_objs=("$GEN_OBJ"/*.o)
+$CXX -o "$OUT/$EXE" "${objs[@]}" ${gen_objs[@]+"${gen_objs[@]}"} -lpthread $LINK_FLAGS
 echo "built $OUT/$EXE"

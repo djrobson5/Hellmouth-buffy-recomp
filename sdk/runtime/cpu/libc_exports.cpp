@@ -1,7 +1,7 @@
 // The C library calls the game code DLL leaves undefined, answered by this executable: the DLL is built without a C library
 // (-nostdinc, no default libraries), so these are the executable's own, handed on under their usual names by
-// host_exports.def.in. Only for a build with the code in a DLL.
-#ifdef XBE_GAME_CODE_DLL
+// host_exports.def.in. Only for a Windows build with the code in a DLL (a macOS dylib binds to libSystem's own).
+#if defined(XBE_GAME_CODE_DLL) && defined(_WIN32)
 #include <cmath>
 #include <cstring>
 

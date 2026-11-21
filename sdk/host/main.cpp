@@ -26,6 +26,10 @@
 #include "core/input.h"
 #include "core/keys.h"
 #include "core/log.h"
+#ifdef XBE_GAME_CODE_DLL
+#include "app/game_code_recipe.h"
+#include "cpu/dispatch.h"
+#endif
 #include "gpu/backend.h"
 #include "gpu/texture_pack.h"
 #include "harness.h"
@@ -151,6 +155,9 @@ std::filesystem::path AppData() {
 
 CommandLine g_args;
 bool g_print_title_id = false;  // --title-id, which only bundle.sh asks for
+#ifdef XBE_GAME_CODE_DLL
+std::filesystem::path g_game_code;  // --game-code <dylib>: the recompiled game code, instead of <data>/build/<library>
+#endif
 
 // A crash closes the log with "Exit (signal N)", the way every other end closes it: a launcher reading the log can then
 // tell it from a force quit, which can write nothing. Only async-signal-safe calls in here.
@@ -210,6 +217,9 @@ const CommandLine& Args() {
             else if (a == "--version") c.version = true;
             else if (a == "--title-id") g_print_title_id = true;
             else if (a == "--describe-settings") c.describe = true;
+#ifdef XBE_GAME_CODE_DLL
+            else if (a == "--game-code") g_game_code = next();
+#endif
             else if (a.rfind("--", 0) != 0 && a.rfind("-psn_", 0) != 0) c.game = a;
         }
         if (InApp()) {
@@ -227,6 +237,9 @@ const CommandLine& Args() {
         std::error_code ec;
         for (auto* p : {&c.game, &c.config, &c.textures, &c.log, &c.saves, &c.shader_cache, &c.screenshots})
             if (!p->empty()) *p = std::filesystem::absolute(*p, ec);
+#ifdef XBE_GAME_CODE_DLL
+        if (!g_game_code.empty()) g_game_code = std::filesystem::absolute(g_game_code, ec);
+#endif
         return true;
     }();
     (void)parsed;
@@ -244,6 +257,52 @@ std::filesystem::path SavesDir() {
 }
 std::filesystem::path ScreenshotDir() { return Args().screenshots.empty() ? ExeDir() / "Screenshots" : Args().screenshots; }
 std::filesystem::path ShaderCacheDir() { return Args().shader_cache.empty() ? ExeDir() / "shadercache" : Args().shader_cache; }
+
+#ifdef XBE_GAME_CODE_DLL
+// The recompiled game code, a dylib built for this executable (the Mac first start builds it from the player's disc, sdk/host/build.sh
+// --game-code-dylib from the generated sources): --game-code, else <data>/build/<IMAGE_LIBRARY's name>.dylib, where the build leaves it
+// (inside an app that is the app's data folder, outside one the executable's own, as for the rest). It binds to this executable's
+// own names when it is loaded, so it is loaded before the first call into the code. Fail is the caller's: the reason is the return.
+static std::filesystem::path GameCodePath() {
+    if (!g_game_code.empty()) return g_game_code;
+    return (InApp() ? AppData() : DataDir()) / "build" / gamecode::Recipe(1).library;
+}
+
+// false with what to tell the player when the dylib will not do; code is the exit code Fail would use
+static bool LoadGameCode(const std::filesystem::path& dylib, std::wstring& problem, int& code) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const std::wstring name = dylib.filename().wstring();
+    if (!fs::exists(dylib, ec)) {
+        code = kExitNoGameCode;
+        problem = name + L" was not found (" + dylib.wstring() + L"): the game's code is built from your disc at the first start.";
+        return false;
+    }
+    const std::string stamp = gamecode::Stamp();
+    dispatch::LoadResult r = dispatch::Load(dylib, stamp.c_str());
+    const std::wstring detail = fs::path(r.detail).wstring();
+    switch (r.status) {
+        case dispatch::LoadStatus::Ok:
+            LOGR("Game code: %s", dylib.string().c_str());
+            return true;
+        case dispatch::LoadStatus::Stale:
+            LOGE("Game code: %s says \"%s\"; this executable needs \"%s\" %s", dylib.string().c_str(), r.dll_stamp, stamp.c_str(), r.detail.c_str());
+            code = kExitStaleGameCode;
+            problem = name + L" was built for another version of this program or of the game. Delete it and start the game to build it again.";
+            return false;
+        case dispatch::LoadStatus::NotLoaded:
+            code = kExitNoGameCode;
+            problem = name + L" would not load (" + detail + L"): it may be damaged. Delete it and start the game to build it again.";
+            return false;
+        case dispatch::LoadStatus::NoTables:
+        case dispatch::LoadStatus::WrongExeName:
+            break;
+    }
+    code = kExitNoGameCode;
+    problem = name + L" is not the game's code: " + detail + L".";
+    return false;
+}
+#endif
 
 void Fail(int code, const std::wstring& message) {
     std::string text = Narrow(message);
@@ -657,6 +716,13 @@ int main() {
     GameFiles game;
     if (!FindGame(game)) return kExitNoGame;
     if (keep_game) KeepGame(Args().game);
+#ifdef XBE_GAME_CODE_DLL
+    {
+        std::wstring problem;
+        int code = 0;
+        if (!LoadGameCode(GameCodePath(), problem, code)) Fail(code, problem);
+    }
+#endif
 
     std::string title = std::filesystem::path(kGame.title).string();
     if (Instance()) title += " [" + std::to_string(Instance()) + "]";
