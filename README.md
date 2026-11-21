@@ -194,6 +194,30 @@ How the two parts meet, in the order a call takes:
 - A C++ exception thrown in the executable unwinds through the DLL's frames: the DLL catches with `catch (...)` and asks the
   executable (`x86_try_resume`) whether it was a resume for that frame, as it can't name the executable's exception type.
 
+### The game's code as a dylib on the Mac (development)
+
+The Mac app can keep the recompiled game out of the executable, as the Windows build does, so that a Mac release can carry none of it and
+build it from the player's disc at its first start. This is the foundation for that (the executable, the loader and the build of the
+dylib; the first start's window, packaging and `--prepare` for the Mac are not made yet). The default build above is unchanged.
+
+```sh
+export LLVM_MINGW=<folder of llvm-mingw, built from source: its lld has the Mach-O port>
+sdk/host/build.sh -r . -g generated/game -o build/app-dylib -n Buffy --game-code-dylib
+tools/check_game_code_dylib.sh                           # the executable and the dylib bind with nothing undefined, and agree; loads it, headless
+build/app-dylib/Buffy --check-game-code                  # loads build/app-dylib/build/Buffy.dylib and prints what it holds; no window, no game
+```
+
+`--game-code-dylib` builds the executable without the generated code (`-DXBE_GAME_CODE_DLL`, which exports its runtime and the functions
+that replace recompiled ones), then `compiler/` (the tools and headers the first start compiles with; here two scripts that run
+`$LLVM_MINGW`'s clang and lld) and the dylib itself, from `generated/game`, by the first start's own build code (`game_build.cpp`,
+through `tools/first_start_check.cpp --sources`). The compile is the Windows DLL's with `-target arm64-apple-macos13`; the link is
+`ld64.lld -dylib -undefined dynamic_lookup`, with no SDK. A Mach-O dylib differs from the DLL in how the executable's replacements win:
+a weak definition in the dylib would beat them, so `X86_WEAK_FUNC` defines nothing there and the link gives every function that is not
+replaced its name as an alias (`-alias`, from a response file `game_build.cpp` writes from `exports.def` and `compiler/overrides.txt`, the
+replacements the built executable defines). A replacement's name stays undefined in the dylib and binds to the executable when it is
+loaded; the executable's own calls into the dylib (`X86_EXTERN_FUNC`) go through slots that `dispatch::Load` fills with `dlsym`. The ABI
+token is the Windows one's logic (`sdk/cmake/XbeAbi.cmake`), run as `cmake -P sdk/cmake/xbe_abi.cmake` by `build.sh`.
+
 ### The Windows release
 
 What the Windows program does when it starts, and where it keeps things. (Tested on one PC: see "Status".)
@@ -452,7 +476,7 @@ other settings, including pad scripts.
 | `src/` | The game's side of the port: the achievement list, the hooks, widescreen, the Extras additions |
 | `install.sh` | The installer: the steps under "Building it by hand", with checks |
 | `resources/` | `exe_icon.ico`: `Buffy.exe`'s own icon, drawn by `tools/make_exe_icon.py` |
-| `tools/` | `regen.sh`; `make_config.py` writes the recompiler's input, and `buffy_config/` (C++) does the same for the Windows first start, checked against it by `check_config_tool.sh`, and also makes the achievement pictures and the icon from the disc (`--pictures`; `make_achievement_icons.py` and `make_icon.py` are the Mac's, and `compare_pngs.py` and `check_ico.py` check the C++ against them); `disasm.py` disassembles by name; `coverage.py` reports what the game calls in the libraries; `check_game_code_dll.sh` (with `library_calls.cpp`) and `sim_first_start.sh` (with `first_start_check.cpp`) check the Windows build, and `package_windows.sh` (with `audit_windows_package.py` and `windows_player_readme.txt`) assembles and audits its release (see "Cross-building for Windows" and "The Windows release") |
+| `tools/` | `regen.sh`; `make_config.py` writes the recompiler's input, and `buffy_config/` (C++) does the same for the Windows first start, checked against it by `check_config_tool.sh`, and also makes the achievement pictures and the icon from the disc (`--pictures`; `make_achievement_icons.py` and `make_icon.py` are the Mac's, and `compare_pngs.py` and `check_ico.py` check the C++ against them); `disasm.py` disassembles by name; `coverage.py` reports what the game calls in the libraries; `check_game_code_dll.sh` (with `library_calls.cpp`) and `sim_first_start.sh` (with `first_start_check.cpp`) check the Windows build, and `check_game_code_dylib.sh` the Mac build with the game's code in a dylib, and `package_windows.sh` (with `audit_windows_package.py` and `windows_player_readme.txt`) assembles and audits its release (see "Cross-building for Windows" and "The Windows release") |
 | `docs/xdk-4432.md` | How this game differs from what the SDK expected, and the evidence |
 | `assets/`, `config/game.toml`, `generated/`, `build/` | Not in the repository: the game's files, what's derived from them, and build output |
 

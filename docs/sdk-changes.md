@@ -187,3 +187,9 @@ What this port changed:
     thread references a snapshot holds.
   - `EnsureDpcThread` starts the DPC thread (its stack and KPCR are guest memory) before the first snapshot. The device snapshot keeps
     `SwitchTexture`'s lazily made header table. `TakeGateWaitNs` reports the longest a host writer waited at the gate.
+- The game code as a Mach-O dylib for the macOS host (`sdk/host/build.sh --game-code-dylib`): `cpu/x86_ops.h` has `__APPLE__` branches (`X86_WEAK_FUNC` defines
+  nothing in the dylib, the host's `X86_HOST_API`/`X86_FUNC` are default visibility, `X86_EXTERN_FUNC` goes through a slot `dispatch::Load` fills by name,
+  `X86_TRACED_FUNC` is refused); `cpu/dispatch.cpp` has the dlopen loader (`dispatch::Load(path, stamp)`, `Describe`), `cpu/libc_exports.cpp` is Windows only;
+  `app/game_build.cpp` builds a dylib when `Recipe::target` is `Target::MachO` (tools without `.exe`, `ld64.lld`, `WriteAliasResponse`, `app/macho_export.h` for the
+  stamp) and has `BuildFromSources`; `cmake/XbeAbi.cmake` is the ABI token and flags for both platforms (`cmake/xbe_abi.cmake` runs it as a script);
+  `harness/build.sh` takes `NO_GEN=1`. `tools/check_game_code_dylib.sh` checks the result. The Windows token changes once with `x86_ops.h`.

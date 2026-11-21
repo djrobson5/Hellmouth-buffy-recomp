@@ -157,6 +157,7 @@ CommandLine g_args;
 bool g_print_title_id = false;  // --title-id, which only bundle.sh asks for
 #ifdef XBE_GAME_CODE_DLL
 std::filesystem::path g_game_code;  // --game-code <dylib>: the recompiled game code, instead of <data>/build/<library>
+bool g_check_game_code = false;     // --check-game-code: load it, say what it holds, and exit (no window, no game files)
 #endif
 
 // A crash closes the log with "Exit (signal N)", the way every other end closes it: a launcher reading the log can then
@@ -219,6 +220,7 @@ const CommandLine& Args() {
             else if (a == "--describe-settings") c.describe = true;
 #ifdef XBE_GAME_CODE_DLL
             else if (a == "--game-code") g_game_code = next();
+            else if (a == "--check-game-code") g_check_game_code = true;
 #endif
             else if (a.rfind("--", 0) != 0 && a.rfind("-psn_", 0) != 0) c.game = a;
         }
@@ -301,6 +303,33 @@ static bool LoadGameCode(const std::filesystem::path& dylib, std::wstring& probl
     code = kExitNoGameCode;
     problem = name + L" is not the game's code: " + detail + L".";
     return false;
+}
+#endif
+
+#ifdef XBE_GAME_CODE_DLL
+// --check-game-code: what the first start's last step would find out, without the game: the dylib is loaded as a start loads it (bound
+// to this executable, its stamp compared, its tables and the executable's slots filled) and what it holds is printed. Before the log,
+// SDL and the game files: no window, no message box (Fail shows one), no disc. Exit 0 loaded, else the exit code of the start's failure
+// (kExitNoGameCode 7, kExitStaleGameCode 8) with the reason on stderr. tools/check_game_code_dylib.sh runs it.
+static int CheckGameCode() {
+    const std::filesystem::path dylib = GameCodePath();
+    std::wstring problem;
+    int code = 0;
+    const auto began = std::chrono::steady_clock::now();
+    if (!LoadGameCode(dylib, problem, code)) {
+        std::fprintf(stderr, "game code: not loaded: %s\n", Narrow(problem).c_str());
+        return code;
+    }
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - began).count();
+    const dispatch::Tables t = dispatch::Describe();
+    std::printf("game code: %s\n", dylib.string().c_str());
+    std::printf("stamp: %s\n", gamecode::Stamp().c_str());
+    std::printf("functions: %zu\n", t.functions);
+    std::printf("continuations: %zu\n", t.continuations);
+    std::printf("externs: %zu of %zu filled\n", t.externs_filled, t.externs);
+    std::printf("code: %08X..%08X entry %08X\n", t.code_base, t.code_end, t.entry);
+    std::printf("load: %.1f ms\n", ms);
+    return kExitOk;
 }
 #endif
 
@@ -664,6 +693,9 @@ int main() {
         std::printf("%s\n", kGame.version);
         return kExitOk;
     }
+#ifdef XBE_GAME_CODE_DLL
+    if (g_check_game_code) return CheckGameCode();
+#endif
     if (g_print_title_id) {  // for bundle.sh: the app's bundle ID is made from it
         std::printf("%08x\n", kGame.title_id);
         return kExitOk;
