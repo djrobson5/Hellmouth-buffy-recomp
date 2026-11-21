@@ -8,12 +8,14 @@
 #   MAC_DEPS=<folder>   (environment) the libraries and the compiler built from source by tools/mac/build_toolchain.sh and build_libs.sh,
 #                       instead of Homebrew's: macOS 13.0 and later, nothing from Homebrew, SDL3 and MoltenVK as dylibs copied to
 #                       <out>/Frameworks (the executable finds them there), glslang and SPIRV-Tools linked in. With --game-code-dylib, the
-#                       compiler/ folder gets that clang and ld64.lld (real files), not scripts that run $LLVM_MINGW. Unset, the build is
+#                       compiler/ folder gets that clang and ld64.lld (real files), not scripts that run $LLVM_MINGW, and the Mac builds of
+#                       xbe_recomp and buffy_config are made for macOS 13.0. Unset, the build is
 #                       the one with Homebrew's libraries, as always. tools/mac/check_mac_deps.sh checks the result.
 #   --game-code-dylib   (anywhere on the line) the executable without the game's code: it loads <out>/build/<name>.dylib (or --game-code)
 #                       as the Windows build loads Buffy.dll. Builds, in <out>: the executable; game_code/ (the ABI token and flags,
-#                       sdk/cmake/xbe_abi.cmake); compiler/ (what the first start compiles with: clang and ld64.lld from
-#                       $LLVM_MINGW, the headers, overrides.txt, the executable's overrides); and, for development, the dylib itself
+#                       sdk/cmake/xbe_abi.cmake); compiler/ (what the first start builds with: clang and ld64.lld from $LLVM_MINGW,
+#                       the headers, overrides.txt (the executable's overrides), xbe_recomp, buffy_config, sdk_names.txt, xdk/4432);
+#                       and, for development, the dylib itself
 #                       from the generated sources (build/<name>.dylib, tools/first_start_check.cpp --sources). Use another <out> than
 #                       the default build's: the objects differ. tools/check_game_code_dylib.sh checks the result.
 set -e
@@ -41,10 +43,16 @@ if [ -n "$MAC_DEPS" ]; then
 else
     BREW=$(brew --prefix)
 fi
-# the Dock's icon for this build (tools/make_icon.py), which has no app around it
-if [ -f "$REPO/assets/$NAME.png" ]; then cp "$REPO/assets/$NAME.png" "$OUT/icon.png"; fi
-# the achievement icons, if the game has any (a game's tools make them), which bundle.sh puts in the app
-if [ -d "$REPO/assets/achievements" ]; then mkdir -p "$OUT/achievements"; cp "$REPO"/assets/achievements/*.png "$OUT/achievements/"; fi
+if [ -n "$DYLIB" ]; then
+    # nothing made from the game goes in: like a release, the first start makes the icon and the achievement pictures from the player's
+    # disc in the data folder (buffy_config --pictures); what an earlier build left here would hide that
+    rm -rf "$OUT/icon.png" "$OUT/achievements"
+else
+    # the Dock's icon for this build (tools/make_icon.py), which has no app around it
+    if [ -f "$REPO/assets/$NAME.png" ]; then cp "$REPO/assets/$NAME.png" "$OUT/icon.png"; fi
+    # the achievement icons, if the game has any (a game's tools make them), which bundle.sh puts in the app
+    if [ -d "$REPO/assets/achievements" ]; then mkdir -p "$OUT/achievements"; cp "$REPO"/assets/achievements/*.png "$OUT/achievements/"; fi
+fi
 # Dear ImGui for the in-game menu, the version the CMake build uses
 IMGUI=$REPO/build/_deps/imgui-src
 [ -f "$IMGUI/imgui.h" ] || { mkdir -p "$(dirname "$IMGUI")"; git -c advice.detachedHead=false clone -q --depth 1 --branch v1.91.0 https://github.com/ocornut/imgui.git "$IMGUI"; }

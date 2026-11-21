@@ -4,8 +4,8 @@
 # <folder> is one of
 #   the output of tools/mac/build_toolchain.sh and build_libs.sh (default ~/Projects/toolchains/mac-deps): bin/clang, bin/ld64.lld, lib/*.dylib,
 #       and the static libraries lib/*.a; its licenses/ are the ones checked
-#   a build of sdk/host/build.sh (a folder with the executable, or a .app): the executable, Frameworks/*.dylib, compiler/clang and
-#       compiler/ld64.lld, build/*.dylib (the game code); the licences are <folder>/licenses, or the second argument, or $MAC_DEPS/licenses
+#   a build of sdk/host/build.sh (a folder with the executable, or a .app): the executable, Frameworks/*.dylib, compiler/clang,
+#       compiler/ld64.lld, compiler/xbe_recomp, compiler/buffy_config, build/*.dylib (the game code); the licences are <folder>/licenses, or the second argument, or $MAC_DEPS/licenses
 # For each Mach-O that would ship: arm64; every minos 13.0 or lower (every slice); it loads only /usr/lib/*, /System/*, and @rpath/,
 # @executable_path/ and @loader_path/ names, each @rpath one a file that is shipped; its search paths (LC_RPATH) are all @-relative; nothing
 # names /opt/homebrew or /usr/local, and no /opt/homebrew string is inside it; it is signed (ad hoc is enough). Licences: each component the files come from has its licence and a
@@ -29,7 +29,7 @@ else
     if [[ "$D" == *.app ]]; then X=$D/Contents/MacOS; FW=$D/Contents/Frameworks; else X=$D; FW=$D/Frameworks; fi
     LIC=${2:-}; [ -z "$LIC" ] && [ -d "$D/licenses" ] && LIC=$D/licenses; [ -z "$LIC" ] && [ -n "${MAC_DEPS:-}" ] && LIC=$MAC_DEPS/licenses
     [ -f "$X/$NAME" ] && files+=("$X/$NAME")
-    for f in "$FW"/*.dylib "$D"/compiler/clang "$D"/compiler/ld64.lld "$D"/build/*.dylib; do [ -f "$f" ] && [ ! -L "$f" ] && files+=("$f"); done
+    for f in "$FW"/*.dylib "$D"/compiler/clang "$D"/compiler/ld64.lld "$D"/compiler/xbe_recomp "$D"/compiler/buffy_config "$D"/build/*.dylib; do [ -f "$f" ] && [ ! -L "$f" ] && files+=("$f"); done
     libdirs=("$FW" "$X"); need=(sdl3 moltenvk glslang spirv-tools)
     [ -f "$D/compiler/clang" ] && need+=(llvm)
     [ -f "$X/$NAME" ] || echo "FAIL  no executable $X/$NAME"

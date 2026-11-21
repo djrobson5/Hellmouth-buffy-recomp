@@ -2,13 +2,18 @@
 # game_code_dylib.sh: the second half of sdk/host/build.sh --game-code-dylib, which runs it after the executable is built.
 #   -r repo   -g generated folder of the image   -o out folder   -n exe name
 # Makes <out>/compiler, laid out as the first start finds its tools (app/game_build.h, Layout::Compiler), and builds the dylib from the
-# generated sources with the first start's own build code (tools/first_start_check.cpp --sources over app/game_build.cpp):
+# generated sources with the first start's own build code (tools/first_start_check.cpp --sources over app/game_build.cpp). <out> is then
+# what a release holds beside the executable (the Windows release's counterpart, tools/package_windows.sh); packaging it as an app is
+# sdk/host/bundle.sh's, where <out>/compiler goes to Buffy.app/Contents/Resources/compiler (app::AppFolder in sdk/host/main.cpp):
 #   compiler/clang, compiler/ld64.lld   scripts that run the llvm-mingw toolchain at $LLVM_MINGW (default ~/Projects/toolchains/llvm-mingw),
 #                                       which is built from source (its lld has the Mach-O port); a release carries its own copies.
 #                                       With MAC_DEPS=<folder> (tools/mac/build_toolchain.sh): copies of its bin/clang and bin/ld64.lld,
 #                                       the real programs a release carries, and no need for $LLVM_MINGW
 #   compiler/include/{cpu,freestanding} the headers the generated code is compiled against
 #   compiler/overrides.txt              the functions the executable replaces (list_overrides.sh), which the dylib must not define
+#   compiler/xbe_recomp, buffy_config   the Mac builds of the translator and the config tool (tools/CMakeLists.txt, built into
+#                                       game_code/tools; with MAC_DEPS for macOS 13.0), and sdk_names.txt, the names buffy_config binds
+#   compiler/xdk/4432/layout.toml       what xbe_recomp reads of the XDK
 #   game_code/first_start_check         the build, compiled here
 #   build/<name>.dylib                  the game's code (the exe loads it from there), objects in cache/game-code, log in logs/compile.log
 set -e
@@ -50,6 +55,24 @@ else
     chmod +x "$C/clang" "$C/ld64.lld"
 fi
 "$HERE/list_overrides.sh" "$OUT/$NAME" "$C/overrides.txt"
+
+# the first start's two other tools, for this Mac, and what they read (as package_windows.sh puts them in the release's compiler folder).
+# Built apart from build/tools (regen.sh's, for the development machine's own macOS): with MAC_DEPS for macOS 13.0. Their sources
+# (Zydis, toml++) are taken from a build/tools already made when there is one, else fetched as CMake always does.
+mkdir -p "$CODE"
+T=$CODE/tools
+TARGET_FLAG=; [ -n "$MAC_DEPS" ] && TARGET_FLAG=-DCMAKE_OSX_DEPLOYMENT_TARGET=13.0
+FETCHED=()
+for dep in zydis tomlplusplus; do
+    [ -d "$REPO/build/tools/_deps/$dep-src" ] && FETCHED+=("-DFETCHCONTENT_SOURCE_DIR_$(echo "$dep" | tr a-z A-Z)=$REPO/build/tools/_deps/$dep-src")
+done
+cmake -S "$REPO/tools" -B "$T" -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 ${TARGET_FLAG:+"$TARGET_FLAG"} ${FETCHED[@]+"${FETCHED[@]}"} > "$CODE/tools-cmake.log" 2>&1 ||
+    { tail -20 "$CODE/tools-cmake.log" >&2; exit 1; }
+cmake --build "$T" -j "$JOBS" --target xbe_recomp buffy_config buffy_config_names > "$CODE/tools-build.log" 2>&1 || { tail -20 "$CODE/tools-build.log" >&2; exit 1; }
+rm -f "$C/xbe_recomp" "$C/buffy_config" "$C/sdk_names.txt"
+cp -f "$T/xbe_recomp" "$T/buffy_config" "$T/sdk_names.txt" "$C/"
+mkdir -p "$C/xdk/4432"
+cp -f "$REPO/sdk/xdk/4432/layout.toml" "$C/xdk/4432/"
 
 # the first start's build code, for this Mac: with the Mach-O flags (game_code_flags.h) it builds a dylib
 mkdir -p "$CODE"
