@@ -537,6 +537,9 @@ void Analysis::Run() {
         std::vector<uint32_t> targets;
         for (auto& [va, insn] : insns_)
             if (insn.flow == Flow::Call && IsCode(insn.target) && !functions.count(insn.target)) targets.push_back(insn.target);
+        // in address order: insns_ is unordered, and a walk can cover a later target, so the order decides the result
+        std::sort(targets.begin(), targets.end());
+        targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
         for (uint32_t t : targets) {
             if (functions.count(t)) continue;
             uint8_t cov = cover_[t - lo_];
@@ -576,6 +579,7 @@ void Analysis::SetjmpContinuations() {
     std::vector<uint32_t> sites;
     for (auto& [va, insn] : insns_)
         if (insn.flow == Flow::Call && cfg.setjmp.count(insn.target)) sites.push_back(va);
+    std::sort(sites.begin(), sites.end());  // insns_ is unordered: the same order on every host
     for (uint32_t va : sites) {
         uint32_t ret = va + insns_[va].len;
         MakeFunction(ret);
