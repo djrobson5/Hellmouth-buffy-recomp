@@ -989,7 +989,11 @@ int main() {
     SetAppIcon(g_window);
     const char* full_screen = std::getenv(kFullScreenEnv);
     if (full_screen) LOGR("window: full screen %s, as before the restart", full_screen[0] == '1' ? "on" : "off");
-    ApplyNow(full_screen ? full_screen[0] == '1' : -1);
+    // RecompLauncher's Big Picture mode (a controller, the couch) starts the game full screen whatever the setting says
+    const char* launcher_mode = std::getenv("RECOMPLAUNCHER_MODE");
+    const bool big_picture = launcher_mode && std::strcmp(launcher_mode, "bigpicture") == 0;
+    if (!full_screen && big_picture) LOGR("window: full screen, as RecompLauncher is in Big Picture mode");
+    ApplyNow(full_screen ? full_screen[0] == '1' : big_picture ? 1 : -1);
     int place[4] = {};
     if (const char* p = std::getenv(kPlaceEnv); p && std::sscanf(p, "%d %d %d %d", &place[0], &place[1], &place[2], &place[3]) == 4 &&
                                                 place[2] > 0 && place[3] > 0) {

@@ -32,6 +32,15 @@
 
   "settings": [
     {
+      "id": "display_mode", "label": "Display mode", "group": "Display",
+      "help": "Windowed: a window you can move and resize. Full screen: macOS's own full screen at the screen's resolution. Control-Command-F or the window's green button switches while you play. In Big Picture mode the game always starts full screen.",
+      "choices": [
+        { "label": "Windowed", "set": { "display/mode": "\"windowed\"" } },
+        { "label": "Full screen", "set": { "display/mode": "\"borderless\"" } }
+      ],
+      "defaults": { "display/mode": "\"windowed\"" }
+    },
+    {
       "id": "vsync", "label": "V-Sync", "group": "Display",
       "help": "Prevents tearing. The frame rate can't go above the screen's refresh rate.",
       "choices": [
