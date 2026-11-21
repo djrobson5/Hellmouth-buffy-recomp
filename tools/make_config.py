@@ -170,7 +170,8 @@ def main():
     with open(args.out, "w") as w:
         w.write("# Recompiler input for Default.xbe, written by tools/make_config.py from final.map\n\n[xbe]\n")
         w.write('path = "assets/Default.xbe"\ntitle = 0x45410012\nentry = 0x00579EA2\nxdk = 4432\n')
-        w.write('out = "generated/game"\npartitions = 128\n')
+        w.write('out = "generated/game"\nlibrary = "Buffy.dll"  # the game code DLL beside Buffy.exe, which the executable delay loads\n')
+        w.write("partitions = 128\n")
         w.write(f"setjmp = [0x{setjmp:08X}]\n")
         w.write("code_sections = [" + ", ".join(f'"{c}"' for c in CODE_SECTIONS) + "]\n")
         w.write("data_ranges = [\n")

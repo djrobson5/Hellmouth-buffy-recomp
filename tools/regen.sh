@@ -9,10 +9,9 @@ if [ ! -f assets/Default.xbe ] || [ ! -f assets/final.map ]; then
 fi
 if [ ! -f assets/Buffy.icns ] && [ -n "$1" ]; then python3 tools/make_icon.py "$1"; fi
 if [ ! -d assets/achievements ] && [ -n "$1" ]; then python3 tools/make_achievement_icons.py "$1"; fi
-if [ ! -x build/tools/xbe_recomp ]; then
-    cmake -S tools -B build/tools -DCMAKE_POLICY_VERSION_MINIMUM=3.5 > /dev/null
-    cmake --build build/tools -j"$(sysctl -n hw.ncpu)" --target xbe_recomp xbe_symbols > /dev/null
-fi
+# the recompiler is rebuilt whenever its sources are newer (a no-op otherwise), as the generated code and the host must agree
+[ -d build/tools ] || cmake -S tools -B build/tools -DCMAKE_POLICY_VERSION_MINIMUM=3.5 > /dev/null
+cmake --build build/tools -j"$(sysctl -n hw.ncpu)" --target xbe_recomp xbe_symbols > /dev/null
 mkdir -p config build
 python3 tools/make_config.py
 if ! build/tools/xbe_recomp config/game.toml --xdk sdk/xdk > build/recomp.log 2>&1; then

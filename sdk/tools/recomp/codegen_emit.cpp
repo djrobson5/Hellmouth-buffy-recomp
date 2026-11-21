@@ -115,6 +115,7 @@ std::string CodeGen::EmitFunction(uint32_t entry) {
     }
     // a function that registers an SEH frame (mov fs:[0], ...) may be where a C++ catch resumes: the CRT's jump to
     // the continuation throws X86Resume, caught by the innermost such frame whose stack holds the resume esp
+    // (X86_CATCH_RESUME, cpu/x86_ops.h: a catch by type in the executable, a catch of everything in the game code DLL)
     bool seh = false;
     for (uint32_t va : body) {
         ZydisDecodedInstruction in;
@@ -138,7 +139,7 @@ std::string CodeGen::EmitFunction(uint32_t entry) {
     if (!entry_first) out += F("\tgoto loc_%08X;\n", entry);
     if (labels_.count(entry) && entry_first) out += F("loc_%08X:;\n", entry);
     out += body_;
-    if (seh) out += "\t} catch (const X86Resume& r) {\n\t\tif (r.esp >= x86_frame) throw;\n\t\tx86_resume(ctx, base, r);\n\t}\n";
+    if (seh) out += "\t} X86_CATCH_RESUME(x86_frame)\n";
     out += "}\n";
     if (an_.cfg.trace.count(entry))
         out += F("X86_TRACED_FUNC(%s, __imp__%s, 0x%XU)\n\n", FuncName(entry).c_str(), FuncName(entry).c_str(), entry);
@@ -231,6 +232,11 @@ bool CodeGen::Run() {
     // recompiled body traps, so the host override still links
     std::string syms = "#pragma once\n";
     syms += F("#define IMAGE_XBE \"%s\"\n", fs::path(an_.cfg.xbe_path).filename().string().c_str());
+    // the game code DLL the executable loads, and the image's code and data without its certificate: another copy of
+    // the release whose file differs only there is accepted (runtime/xbe/image_hash.h). Both are the executable's, not
+    // the DLL's, which is built on the player's PC
+    syms += F("#define IMAGE_LIBRARY \"%s\"\n", an_.cfg.library.c_str());
+    syms += F("#define IMAGE_SECTIONS_HASH 0x%llXull\n", (unsigned long long)xbe::SectionsHash(an_.img.file));
     std::vector<uint32_t> absent;
     for (auto& [name, va] : an_.cfg.symbols) {
         uint32_t a = va ? va : 0xFFFF0000u + uint32_t(absent.size());
@@ -257,7 +263,9 @@ bool CodeGen::Run() {
     for (uint32_t f : absent) shared += F("X86_EXTERN_FUNC(%s);\n", FuncName(f).c_str());
     std::map<std::string, bool> hooks;
     for (auto& [va, h] : an_.cfg.hooks) hooks.emplace(h.call, h.Returns());
-    for (auto& [name, returns] : hooks) shared += F("%s %s(X86Context& ctx, uint8_t* base);\n", returns ? "bool" : "void", name.c_str());
+    // a hook is the executable's: it exports it, and the DLL imports it
+    for (auto& [name, returns] : hooks)
+        shared += F("X86_HOST_API %s %s(X86Context& ctx, uint8_t* base);\n", returns ? "bool" : "void", name.c_str());
     WriteIfChanged(out_ / "x86_recomp_shared.h", shared);
 
     // partition by instruction count so the files compile in similar time
@@ -296,10 +304,6 @@ bool CodeGen::Run() {
              an_.img.base + an_.img.image_size);
     map += F("const uint32_t X86EntryPoint = 0x%Xu;\nconst uint32_t X86KernelThunk = 0x%Xu;\n\n", an_.img.entry,
              an_.img.kernel_thunk);
-    // the image's code and data without its certificate: another copy of the release whose file differs only
-    // there is accepted (runtime/xbe/image_hash.h)
-    map += F("extern const uint64_t kImageSectionsHash;\nconst uint64_t kImageSectionsHash = 0x%llXull;\n\n",
-             (unsigned long long)xbe::SectionsHash(an_.img.file));
     map += "const X86FuncMapping X86FuncMappings[] = {\n";
     for (uint32_t f : funcs) map += F("\t{0x%Xu, %s},\n", f, FuncName(f).c_str());
     map += "\t{0, nullptr},\n};\n";
@@ -311,6 +315,23 @@ bool CodeGen::Run() {
         map += F("X86_WEAK_FUNC(%s, __imp__%s)\n", FuncName(f).c_str(), FuncName(f).c_str());
     }
     WriteIfChanged(out_ / "x86_func_mapping.cpp", map);
+
+    // the game code DLL exports its tables and each recompiled body (one name a function: PE allows 65535); the
+    // executable's import library also takes a function's own name, for the calls it makes where it has no override
+    std::string library = F("LIBRARY %s\nEXPORTS\n", an_.cfg.library.c_str());
+    std::string exports;
+    std::string aliases;
+    for (const char* table : {"X86FuncMappings", "X86Continuations", "X86CodeBase", "X86CodeEnd", "X86EntryPoint"})
+        exports += F("    %s DATA\n", table);
+    for (const std::vector<uint32_t>* list : {&funcs, &absent}) {
+        for (uint32_t f : *list) {
+            std::string name = FuncName(f);
+            exports += F("    __imp__%s\n", name.c_str());
+            aliases += F("    %s == __imp__%s\n", name.c_str(), name.c_str());
+        }
+    }
+    WriteIfChanged(out_ / "exports.def", library + exports);
+    WriteIfChanged(out_ / "imports.def", library + exports + aliases);
 
     std::string stats = F("functions %zu\ninstructions %zu\n", funcs.size(), insn_count_);
     for (auto& [k, v] : unimpl_) stats += F("unimplemented %s %zu\n", k.c_str(), v);
