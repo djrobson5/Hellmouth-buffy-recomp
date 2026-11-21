@@ -1,4 +1,4 @@
-// the settings file: beside the exe, or where --config says (core/settings_file.h for its form)
+// the settings file: in the data folder (beside the exe unless --data says otherwise), or where --config says (core/settings_file.h for its form)
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -46,7 +46,7 @@ Settings& Get() {
 }
 
 std::filesystem::path SettingsFile() {
-    return Args().config.empty() ? ExeDir() / kGame.settings : Args().config;
+    return Args().config.empty() ? DataDir() / kGame.settings : Args().config;
 }
 
 void Load() {

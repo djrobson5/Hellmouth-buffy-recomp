@@ -108,14 +108,28 @@ std::string Sha1(const std::vector<uint8_t>& data) {
 
 // the game where --game says (a folder with the xbe, or a disc image), else in assets
 bool FindGame(GameFiles& game) {
-    const fs::path& given = Args().game;
+    GameSearch search;
+    if (FindGameFrom(Args().game, game, search)) return true;
+    // the other release, which a player may start anyway on a build that carries its code, is asked about inside
+    if (search.code) Fail(search.code, search.problem);
+    return false;
+}
+
+// FindGame for one place (a folder, an image, or assets when given is empty): the same search, but a game that is not there is
+// told in search and not made the end of the run, so that a caller can go on to another place
+bool FindGameFrom(const fs::path& given, GameFiles& game, GameSearch& search) {
     std::error_code ec;
     fs::path folder;
     std::vector<fs::path> isos;
+    auto refuse = [&](int code, const std::wstring& text) {
+        search.code = code;
+        search.problem = text;
+        return false;
+    };
     if (!given.empty()) {
         if (fs::is_directory(given, ec)) folder = given;
         else if (fs::is_regular_file(given, ec)) isos.push_back(given);
-        else Fail(kExitNoGame, L"The game files couldn't be found: " + given.wstring() + L" does not exist.");
+        else return refuse(kExitNoGame, L"The game files couldn't be found: " + given.wstring() + L" does not exist.");
     } else {
         folder = FindAssets();
     }
@@ -181,19 +195,27 @@ bool FindGame(GameFiles& game) {
     }
 
     if (other_name.empty()) {
-        if (!foreign.empty()) Fail(kExitNoGame, L"The game files couldn't be found: " + foreign.wstring() + L" holds another game.");
+        if (!foreign.empty())
+            return refuse(kExitNoGame, L"The game files couldn't be found: " + foreign.wstring() + L" holds another game.");
         if (!given.empty())
-            Fail(kExitNoGame, L"The game files couldn't be found: " + given.wstring() + L" has no " + Wide(IMAGE_XBE) +
-                                  L" and no disc image with one.");
-        Fail(kExitNoGame, kGame.missing);
+            return refuse(kExitNoGame, L"The game files couldn't be found: " + given.wstring() + L" has no " + Wide(IMAGE_XBE) +
+                                           L" and no disc image with one.");
+        return refuse(kExitNoGame, kGame.missing);
     }
+#ifdef XBE_GAME_CODE_DLL
+    // the game's code is built from the copy that is run, at the first start, and has to be the release this program was made
+    // for (its stamp says which): another release cannot be started by saying so
+    return refuse(kExitWrongRelease, other_name.filename().wstring() +
+                                         L" is a different release of the game than this program was made for. Only the US "
+                                         L"release is supported for now.");
+#else
     std::wstring text = other_name.filename().wstring() +
                         L" is a different release of the game than this build was made from (only the US release is "
                         L"supported for now), and will most likely crash.";
     if (Args().any_release) LOGW("game: another release, started anyway (--any-release)");
-    else if (Args().no_dialogs) Fail(kExitWrongRelease, text);
+    else if (Args().no_dialogs) return refuse(kExitWrongRelease, text);
 #ifndef _WIN32
-    else Fail(kExitWrongRelease, text);  // --any-release starts it anyway
+    else return refuse(kExitWrongRelease, text);  // --any-release starts it anyway
 #else
     else if (MessageBoxW(nullptr, (text + L"\n\nStart it anyway?").c_str(), kGame.short_title,
                     MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2) != IDYES) {
@@ -201,6 +223,7 @@ bool FindGame(GameFiles& game) {
         logx::Flush();
         ExitProcess(kExitWrongRelease);
     }
+#endif
 #endif
     game = std::move(other);
     kernel::MountDisc(std::move(other_disc));

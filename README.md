@@ -171,6 +171,23 @@ How the two parts meet, in the order a call takes:
 - A C++ exception thrown in the executable unwinds through the DLL's frames: the DLL catches with `catch (...)` and asks the
   executable (`x86_try_resume`) whether it was a resume for that frame, as it can't name the executable's exception type.
 
+### The Windows release
+
+What the Windows program does when it starts, and where it keeps things. (None of it has been run on Windows: see "Status".)
+
+**The game.** `--game <disc image or folder>` names the copy of the game to run. Without it the program uses the disc image it
+remembers (`<data>\disc_image.txt`, written once a choice has been accepted), else what is in `assets\` beside it, else a file dialog
+asks and the choice is remembered. The game must be the release the program was made for: the code is made from the player's own
+copy (see below), and another release's would not fit. A launcher's `--no-dialogs` and the game's restart for a level (`--relaunched`)
+never ask.
+
+**Where things are kept.** `--data <dir>` (or `RECOMPLAUNCHER_DATA` in the environment) is one folder for everything the game writes:
+`settings.toml`, `hdd\` (saves), `logs\`, `Screenshots\`, `shadercache\`, `textures\`, crash dumps, `achievements.txt` and
+`disc_image.txt`, and the built game code (`build\`, `cache\game-code\`). It defaults to the folder of the exe, which is where they
+were already. `--config`, `--saves`, `--log`, `--textures`, `--shader-cache` and `--screenshots` still name their own places, and what
+ships with the exe and is only read (the splash, subtitles, achievement pictures, the compiler folder) stays beside it. Options take
+`--name value` or `--name=value`.
+
 ## Achievements
 
 The original game has no achievements, so Hellmouth adds 28: one for each boss, plus kills (three of them with particular weapons), secrets, finishing the game on

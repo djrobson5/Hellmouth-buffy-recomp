@@ -29,6 +29,15 @@ What this port changed:
     compile without a C++ library.
   - `sdk/runtime/app/game_code.cpp`, `app.h`, `main.cpp`: `PrepareGameCode` loads `IMAGE_LIBRARY` from beside the executable and ends
     the run with `kExitNoGameCode` when it is missing. Compiling it on the first start is not here yet. `Sha1` is public.
+  - `sdk/runtime/app/main.cpp`, `app.h`, `settings.cpp`, `achievements.cpp`, `gpu/d3d12.cpp`, `system_info.cpp`; `sdk/host/main.cpp` and
+    `sdk/harness/app_headless.cpp`: `app::DataDir` (`--data`, `RECOMPLAUNCHER_DATA`, else the folder of the exe) is where the settings
+    file, hard disk, logs, screenshots, shader cache, texture packs, crash dumps and `achievements.txt` go, so one folder holds all that
+    a game writes; the explicit options still win and the default layout is the one it was. The Mac host and the harness define it as
+    the exe's folder. Options take `--name=value` as well as `--name value`; `--prepare`, `--relaunched` and `--clean-work` are
+    new. `PrintOut`/`PrintErr` write to a launcher's pipe or the parent's console from a GUI program.
+  - `sdk/runtime/app/game_choice.cpp`, `game_files.cpp`: `ChooseGame` (Windows) picks the game as the Mac app does: `--game`, else
+    the image remembered in `<data>\disc_image.txt` (kept only once accepted), else `assets`, else `IFileOpenDialog`. `FindGame` is
+    split, so `FindGameFrom` can try a place without ending the run; with `XBE_GAME_CODE_DLL` another release is refused.
   - `sdk/tools/recomp`: `[xbe] library`, which only a DLL build needs, makes the recompiler write `exports.def` (what the DLL exports: its tables and one
     `__imp__sub_XXXXXXXX` name for each function) and `imports.def` (the same, with `sub_XXXXXXXX` aliases, for the executable's
     import library). `IMAGE_LIBRARY` and `IMAGE_SECTIONS_HASH` are in `image_symbols.h`, so the executable has them without the DLL: the

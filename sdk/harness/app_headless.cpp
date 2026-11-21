@@ -112,6 +112,7 @@ const CommandLine& Args() {
     }();
     return c;
 }
+std::filesystem::path DataDir() { return ExeDir(); }
 std::filesystem::path TextureDir() { return ExeDir() / "textures"; }
 std::filesystem::path SavesDir() { return ExeDir() / (Instance() > 1 ? "hdd" + std::to_string(Instance()) : std::string("hdd")); }
 std::filesystem::path ShaderCacheDir() { return ExeDir() / "shadercache"; }

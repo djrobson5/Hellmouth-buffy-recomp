@@ -4146,7 +4146,7 @@ void D3D12Backend::StartCapture() {
     snprintf(stamp, sizeof(stamp), "%02u%02u%02u_%03u", tm.wHour, tm.wMinute, tm.wSecond, tm.wMilliseconds);
     std::error_code ec;
     // beside the log folder: logs\..\captures by default, or next to a launcher's log
-    std::filesystem::path base = app::Args().log.empty() ? app::ExeDir() : app::LogFolder();
+    std::filesystem::path base = app::Args().log.empty() ? app::DataDir() : app::LogFolder();
     cap_dir_ = std::filesystem::weakly_canonical(base / diag::CaptureDir() / stamp, ec);
     std::filesystem::create_directories(cap_dir_, ec);
     cap_ = _wfopen((cap_dir_ / "frame.txt").c_str(), L"w");

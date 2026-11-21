@@ -126,23 +126,32 @@ void Save();
 void SetSettingsNote(const std::string& comment_lines);
 void LogSettings();  // every setting, as the settings file has them
 std::vector<cfg::Desc> SettingsList();  // every setting the file holds, the host's and the game's
-std::filesystem::path SettingsFile();   // --config, or GameInfo::settings beside the exe
+std::filesystem::path SettingsFile();   // --config, or GameInfo::settings in the data folder (DataDir)
 #ifndef _WIN32
 // a launcher's further --describe-settings fields for a setting; empty for one this host doesn't act on, left out of the list
 std::string LauncherFields(const cfg::Desc& d);
 #endif
 
-// The command line, for a launcher:
+// The command line, for a launcher (an option takes its value as "--game <path>" or "--game=<path>"):
 //   --game <folder with the xbe, or a disc image>   --config <settings file>   --textures <folder>   --log <file>
 //   --saves <folder>: the console's hard disk (save games, the game's cache)   --shader-cache <folder>
 //   --screenshots <folder>: where \ saves a PNG of the picture
+//   --data <folder> (or RECOMPLAUNCHER_DATA in the environment): one folder for everything the game writes, in place of the
+//   one beside the exe: the settings, the hard disk, logs, screenshots, the shader cache, the remembered disc image and,
+//   on Windows, the game's code the first start builds. Each of the options above still names its own place.
 //   With all of them given nothing is written beside the exe, which may then be read-only.
 //   --no-dialogs: failures end the run with their exit code and a line in the log, without a message box
 //   --version, --describe-settings: one line, or the settings as JSON, on stdout; then exit 0
+//   --prepare (Windows): build the game's code (see PrepareGameCode) with no window and no questions, print "progress <0 to 1>
+//   <what it is doing>" lines on stdout, and exit 0 when it is built; any other code, with the reason on stderr, when not.
+//   The game is not started.
 struct CommandLine {
-    std::filesystem::path game, config, textures, log, saves, shader_cache, screenshots;
+    std::filesystem::path game, config, textures, log, saves, shader_cache, screenshots, data;
     bool no_dialogs = false, version = false, describe = false;
     bool any_release = false;  // --any-release: start another release of the game without asking (the launcher asked)
+    bool prepare = false;      // --prepare: set up, don't play (no dialogs either)
+    bool relaunched = false;   // --relaunched: the game restarting itself for a level: no splash, never builds, never asks
+    bool clean_work = false;   // --clean-work, with --prepare: delete the build's work folder once the code is built
     int instance = 0;  // --instance N: a second copy on this PC for system link tests
 };
 const CommandLine& Args();
@@ -156,14 +165,18 @@ enum ExitCode : int {
     kExitGpuLost = 6,       // the graphics driver stopped or reset while playing (Windows' GPU timeout, a driver crash)
     kExitNoGameCode = 7,    // the recompiled game code (the DLL beside the executable) is missing or will not load
     kExitStaleGameCode = 8, // the DLL is there but was built for another version of this executable or of the game
+    kExitBuildFailed = 9,   // --prepare: the game's code could not be built (the reason is on stderr and in logs\compile.log)
 };
 // logs the reason, shows it unless --no-dialogs, and ends the process with code
 [[noreturn]] void Fail(int code, const std::wstring& message);
-std::filesystem::path TextureDir();  // --textures, or textures beside the exe: replace/ holds packs, dump/ dumps
-std::filesystem::path SavesDir();        // --saves, or hdd beside the exe (hddN for --instance N above 1)
-std::filesystem::path ShaderCacheDir();  // --shader-cache, or shadercache beside the exe
-std::filesystem::path ScreenshotDir();   // --screenshots, or Screenshots beside the exe
-std::filesystem::path LogFolder();       // --log's folder, or logs beside the exe; crash dumps and M captures go by it
+std::filesystem::path TextureDir();  // --textures, or textures in the data folder: replace/ holds packs, dump/ dumps
+std::filesystem::path SavesDir();        // --saves, or hdd in the data folder (hddN for --instance N above 1)
+std::filesystem::path ShaderCacheDir();  // --shader-cache, or shadercache in the data folder
+std::filesystem::path ScreenshotDir();   // --screenshots, or Screenshots in the data folder
+std::filesystem::path LogFolder();       // --log's folder, or logs in the data folder; crash dumps and M captures go by it
+// Where the game writes what is not named by an option above: --data, else RECOMPLAUNCHER_DATA, else the folder of the exe.
+// What ships with the exe and is only read (the splash, subtitles, the achievement pictures, the compiler folder) stays beside it.
+std::filesystem::path DataDir();
 void LogSystem();    // the machine and the settings, at a run's start
 uint64_t OneCoreMask();  // the fastest processor core, as an affinity mask (for [system] one_core)
 void ApplyDisplay();  // any thread
@@ -195,12 +208,29 @@ struct GameFiles {
     std::filesystem::path dir;
     std::vector<uint8_t> xbe;
 };
-bool FindGame(GameFiles& game);
+bool FindGame(GameFiles& game);  // where --game says (a folder or an image), else in assets: fails the run when it is not there
+// FindGame for one place, without ending the run: given empty looks in assets. False with what to tell the player in problem.
+// With XBE_GAME_CODE_DLL another release of the game is never accepted: the code is built from this copy, and has to be the
+// release this program was made for.
+struct GameSearch {
+    std::wstring problem;
+    int code = 0;  // the exit code Fail would have used
+};
+bool FindGameFrom(const std::filesystem::path& given, GameFiles& game, GameSearch& search);
+// The game for a Windows start: --game, else the disc image remembered in <data>\disc_image.txt, else what is in assets beside
+// the exe, else a file picker asks the player and the choice is remembered. Where nobody can be asked (--no-dialogs, --prepare,
+// --relaunched) a game that cannot be found ends the run as FindGame does. False when the player cancels the picker.
+bool ChooseGame(GameFiles& game);
 std::string Sha1(const std::vector<uint8_t>& data);  // lower case hex
-// the recompiled code, when the executable carries none (XBE_GAME_CODE_DLL): the DLL beside it (IMAGE_LIBRARY), loaded
-// by its full path before the first call into it; false after telling the player why the game cannot start. For now the
-// DLL must be there already; building it on the first start comes next (game_code.cpp)
+// the recompiled code, when the executable carries none (XBE_GAME_CODE_DLL): <data>\build\<IMAGE_LIBRARY>, loaded by its full path
+// before the first call into it. It is built on the player's PC from their own disc: when it is missing, or its stamp is not
+// the one this executable expects, the first start compiles it behind a progress window (game_code.cpp, game_build.cpp). A
+// relaunched process and --no-dialogs never build and end the run (kExitNoGameCode or kExitStaleGameCode) when
+// it is not there. False after telling the player why the game cannot start.
 bool PrepareGameCode(const GameFiles& game);
+// a line on this process's stdout or stderr (the launcher's pipe, or the console it was typed in); UTF-8, a newline added
+void PrintOut(const std::string& line);
+void PrintErr(const std::string& line);
 int Instance();  // Args().instance
 void* Window();  // HWND
 void* MetalLayer();  // not Windows: the window's CAMetalLayer, null when the window has none (the renderer draws into it)

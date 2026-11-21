@@ -122,6 +122,7 @@ void LogSystem() {
     std::strftime(date, sizeof(date), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
     LOGR("%ls (%s), %s", kGame.title, IMAGE_XBE, date);
     LOGR("Path: %ls", ExeDir().c_str());
+    if (DataDir() != ExeDir()) LOGR("Data: %ls", DataDir().c_str());
     LOGR("OS: %s", OsVersion().c_str());
     SYSTEM_INFO si{};
     GetNativeSystemInfo(&si);

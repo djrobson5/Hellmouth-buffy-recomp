@@ -234,6 +234,7 @@ const CommandLine& Args() {
 }
 
 int Instance() { return Args().instance; }
+std::filesystem::path DataDir() { return ExeDir(); }  // the Mac host writes beside the executable (--saves, --log and the rest name other places)
 std::filesystem::path TextureDir() { return Args().textures.empty() ? ExeDir() / "textures" : Args().textures; }
 std::filesystem::path LogFolder() { return Args().log.empty() ? ExeDir() / "logs" : Args().log.parent_path(); }
 std::filesystem::path SavesDir() {

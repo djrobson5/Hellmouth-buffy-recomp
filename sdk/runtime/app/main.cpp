@@ -56,8 +56,9 @@ LONG WINAPI WriteCrashDump(EXCEPTION_POINTERS* e) {
         }
         kernel::LogGuestStack(*t->ctx, 256);
     }
-    auto dir = Args().log.empty() ? ExeDir() / "CrashDumps" : LogDir() / "CrashDumps";
-    CreateDirectoryW(dir.c_str(), nullptr);
+    auto dir = Args().log.empty() ? DataDir() / "CrashDumps" : LogDir() / "CrashDumps";
+    std::error_code made;
+    std::filesystem::create_directories(dir, made);
     SYSTEMTIME t;
     GetLocalTime(&t);
     wchar_t name[64];
@@ -245,7 +246,19 @@ const CommandLine& Args() {
         wchar_t** v = CommandLineToArgvW(GetCommandLineW(), &n);
         for (int i = 1; v && i < n; i++) {
             std::wstring a = v[i];
-            auto next = [&]() -> std::filesystem::path { return i + 1 < n ? std::filesystem::path(v[++i]) : std::filesystem::path(); };
+            // "--game=<path>" as well as "--game <path>"
+            bool has_value = false;
+            std::wstring inline_value;
+            if (a.rfind(L"--", 0) == 0)
+                if (size_t eq = a.find(L'='); eq != std::wstring::npos) {
+                    inline_value = a.substr(eq + 1);
+                    a.resize(eq);
+                    has_value = true;
+                }
+            auto next = [&]() -> std::filesystem::path {
+                if (has_value) return std::filesystem::path(inline_value);
+                return i + 1 < n ? std::filesystem::path(v[++i]) : std::filesystem::path();
+            };
             if (a == L"--game") c.game = next();
             else if (a == L"--config") c.config = next();
             else if (a == L"--textures") c.textures = next();
@@ -253,43 +266,61 @@ const CommandLine& Args() {
             else if (a == L"--saves") c.saves = next();
             else if (a == L"--shader-cache") c.shader_cache = next();
             else if (a == L"--screenshots") c.screenshots = next();
+            else if (a == L"--data") c.data = next();
             else if (a == L"--instance") c.instance = std::max(0, std::min(8, _wtoi(next().c_str())));
             else if (a == L"--no-dialogs") c.no_dialogs = true;
             else if (a == L"--any-release") c.any_release = true;
             else if (a == L"--version") c.version = true;
             else if (a == L"--describe-settings") c.describe = true;
+            else if (a == L"--prepare") c.prepare = true;
+            else if (a == L"--relaunched") c.relaunched = true;
+            else if (a == L"--clean-work") c.clean_work = true;
         }
         if (v) LocalFree(v);
+        // a setup run for a launcher asks nobody anything
+        if (c.prepare) c.no_dialogs = true;
         // relative paths are taken from where the launcher started us, before anything changes the directory
         std::error_code ec;
-        for (auto* p : {&c.game, &c.config, &c.textures, &c.log, &c.saves, &c.shader_cache, &c.screenshots})
+        for (auto* p : {&c.game, &c.config, &c.textures, &c.log, &c.saves, &c.shader_cache, &c.screenshots, &c.data})
             if (!p->empty()) *p = std::filesystem::absolute(*p, ec);
         return c;
     }();
     return c;
 }
 
+std::filesystem::path DataDir() {
+    static const std::filesystem::path dir = [] {
+        if (!Args().data.empty()) return Args().data;
+        wchar_t value[32768];
+        DWORD n = GetEnvironmentVariableW(L"RECOMPLAUNCHER_DATA", value, DWORD(sizeof(value) / sizeof(value[0])));
+        std::error_code ec;
+        if (n > 0 && n < sizeof(value) / sizeof(value[0])) return std::filesystem::absolute(std::filesystem::path(std::wstring(value, n)), ec);
+        return ExeDir();
+    }();
+    return dir;
+}
+
 int Instance() { return Args().instance; }
 
-std::filesystem::path TextureDir() { return Args().textures.empty() ? ExeDir() / "textures" : Args().textures; }
+std::filesystem::path TextureDir() { return Args().textures.empty() ? DataDir() / "textures" : Args().textures; }
 
-std::filesystem::path LogFolder() { return Args().log.empty() ? ExeDir() / "logs" : Args().log.parent_path(); }
+std::filesystem::path LogFolder() { return Args().log.empty() ? DataDir() / "logs" : Args().log.parent_path(); }
 
 std::filesystem::path SavesDir() {
-    // started on its own: the saves Athelas keeps beside the exe (saves) when it has played the game, else hdd
+    // started on its own: the saves Athelas keeps in the data folder (saves) when it has played the game, else hdd
     std::error_code ec;
     std::filesystem::path base = !Args().saves.empty()                              ? Args().saves
-                                 : std::filesystem::is_directory(ExeDir() / "saves", ec) ? ExeDir() / "saves"
-                                                                                      : ExeDir() / "hdd";
+                                 : std::filesystem::is_directory(DataDir() / "saves", ec) ? DataDir() / "saves"
+                                                                                       : DataDir() / "hdd";
     // a second copy for system link tests keeps a disk of its own
     if (Instance() > 1) base += std::to_wstring(Instance());
     return base;
 }
 
-std::filesystem::path ScreenshotDir() { return Args().screenshots.empty() ? ExeDir() / "Screenshots" : Args().screenshots; }
+std::filesystem::path ScreenshotDir() { return Args().screenshots.empty() ? DataDir() / "Screenshots" : Args().screenshots; }
 
 std::filesystem::path ShaderCacheDir() {
-    return Args().shader_cache.empty() ? ExeDir() / "shadercache" : Args().shader_cache;
+    return Args().shader_cache.empty() ? DataDir() / "shadercache" : Args().shader_cache;
 }
 
 void Fail(int code, const std::wstring& message) {
@@ -299,6 +330,7 @@ void Fail(int code, const std::wstring& message) {
     if (n > 0) WideCharToMultiByte(CP_UTF8, 0, message.c_str(), int(message.size()), narrow.data(), n, nullptr, nullptr);
     LOGE("Exit (%d): %s", code, narrow.c_str());
     logx::Flush();
+    if (Args().prepare) PrintErr("error: " + narrow);
     if (!Args().no_dialogs) MessageBoxW(nullptr, message.c_str(), kGame.short_title, MB_ICONERROR);
     // as kernel::Shutdown: NVIDIA's Streamline crashes in its own clean-up at exit, so with it loaded no DLL clean-up
     if (GetModuleHandleW(L"sl.interposer.dll")) TerminateProcess(GetCurrentProcess(), UINT(code));
@@ -351,16 +383,33 @@ void Pace() {
 
 namespace {
 
-// a line for whoever started us: a launcher's pipe, or the console it was typed in
-void Print(const std::string& text) {
-    HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
-    if (!out || out == INVALID_HANDLE_VALUE) {
-        if (AttachConsole(ATTACH_PARENT_PROCESS)) out = GetStdHandle(STD_OUTPUT_HANDLE);
-    }
-    if (!out || out == INVALID_HANDLE_VALUE) return;
-    DWORD written;
-    WriteFile(out, text.data(), DWORD(text.size()), &written, nullptr);
+// a line for whoever started us: a launcher's pipe, or the console it was typed in. A program of the GUI subsystem has no
+// console of its own: with its standard handles redirected (a launcher's pipe) it writes to those; started from a console
+// without redirection it attaches to the parent's.
+HANDLE OutputHandle(DWORD which, const wchar_t* console_name) {
+    HANDLE out = GetStdHandle(which);
+    if (out && out != INVALID_HANDLE_VALUE) return out;
+    if (!AttachConsole(ATTACH_PARENT_PROCESS) && GetLastError() != ERROR_ACCESS_DENIED) return nullptr;  // denied: already attached
+    out = GetStdHandle(which);
+    if (out && out != INVALID_HANDLE_VALUE) return out;
+    out = CreateFileW(console_name, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    return out == INVALID_HANDLE_VALUE ? nullptr : out;
 }
+
+void Print(DWORD which, const wchar_t* console_name, const std::string& text) {
+    HANDLE out = OutputHandle(which, console_name);
+    if (!out) return;
+    const char* p = text.data();
+    size_t left = text.size();
+    while (left) {
+        DWORD written = 0;
+        if (!WriteFile(out, p, DWORD(std::min<size_t>(left, 1u << 20)), &written, nullptr) || !written) break;
+        p += written;
+        left -= written;
+    }
+}
+
+void Print(const std::string& text) { Print(STD_OUTPUT_HANDLE, L"CONOUT$", text); }
 
 }  // namespace
 
@@ -390,6 +439,11 @@ void PgoStart() {
 }  // namespace
 #endif
 
+namespace app {
+void PrintOut(const std::string& line) { Print(STD_OUTPUT_HANDLE, L"CONOUT$", line + "\n"); }
+void PrintErr(const std::string& line) { Print(STD_ERROR_HANDLE, L"CONOUT$", line + "\n"); }
+}  // namespace app
+
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
 #ifdef XBE_PGO_GEN
     PgoStart();
@@ -407,19 +461,27 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     std::signal(SIGABRT, [](int) { app::WriteCrashDump(nullptr); });
     timeBeginPeriod(1);
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    // the data folder (--data, RECOMPLAUNCHER_DATA, else the exe's) holds what the game writes: made if it is not there
+    std::error_code data_error;
+    std::filesystem::create_directories(app::DataDir(), data_error);
     // one log a session: a relaunch into another image carries on its predecessor's
-    bool relaunched = std::wcsstr(GetCommandLineW(), L"--relaunched") != nullptr;
+    bool relaunched = app::Args().relaunched;
     std::string log = app::kGame.log;
     if (app::Instance() > 1) log += "-" + std::to_string(app::Instance());
     if (!app::Args().log.empty()) log = app::Args().log.stem().string();
     logx::Init(app::LogDir().string(), log, relaunched);
+    if (data_error) LOGE("data folder %s could not be made: %s", app::DataDir().string().c_str(), data_error.message().c_str());
     app::Load();
     if (app::kGame.init) app::kGame.init();
     if (relaunched && !logx::kVerbose) LOGR("Relaunched: %s", IMAGE_XBE);
     else app::LogSystem();
 
     app::GameFiles game;
-    if (!app::FindGame(game)) return app::kExitNoGame;
+    if (!app::ChooseGame(game)) {
+        LOGR("Exit: no disc image chosen");
+        logx::Flush();
+        return app::kExitOk;
+    }
     if (!app::PrepareGameCode(game)) return app::kExitNoGameCode;
 
     bool splash = app::OpenSplash(), handover = app::StartHandover();

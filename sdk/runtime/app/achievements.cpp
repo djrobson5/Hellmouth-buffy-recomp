@@ -67,9 +67,9 @@ void SetCarriedNotes(const char* ids) {
 #endif
 }
 
-// beside the log Athelas gives (the game's folder there), or beside the exe when started on its own: the same file
+// beside the log Athelas gives (the game's folder there), or in the data folder (beside the exe by default) when started on its own
 std::filesystem::path File() {
-    return (app::Args().log.empty() ? app::ExeDir() : app::LogFolder()) / "achievements.txt";
+    return (app::Args().log.empty() ? app::DataDir() : app::LogFolder()) / "achievements.txt";
 }
 
 // On the Mac a launcher can hold a lock on this file beside achievements.txt while it watches the game, and show the unlock
