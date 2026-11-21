@@ -47,7 +47,8 @@ for x in "${EXCL[@]}"; do SRC=$(echo $SRC | tr ' ' '\n' | grep -Ev -- "$x"); don
 
 # host objects, keyed by the flags; rebuilt when the source or any header of the repo, harness or image is newer
 stamp=$(echo "$HOST" | cksum | cut -d' ' -f1)
-newest=$(find "$RT" "$REPO/src" "$H" "$REPO/sdk/host" "$GEN/image_symbols.h" -name '*.h' -print0 | xargs -0 ls -t | head -1)
+# (a host that loads the game code as a dylib has game_code_flags.h in <out>/game_code, with the ABI token: a new token rebuilds what includes it)
+newest=$(find "$RT" "$REPO/src" "$H" "$REPO/sdk/host" "$GEN/image_symbols.h" ${NO_GEN:+"$OUT/game_code/game_code_flags.h"} -name '*.h' -print0 | xargs -0 ls -t | head -1)
 objs=(); stale=()
 for f in $SRC; do
     o=$OUT/host/$(echo "${f#/}" | tr / _ | sed -E "s/\.(cpp|mm)$/.$stamp.o/"); objs+=("$o")

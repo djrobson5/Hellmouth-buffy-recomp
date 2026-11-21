@@ -447,6 +447,12 @@ bool Builder::Plan() {
     // an object is reused when its source, the flags it was compiled with (the ABI token is one of them) and the compiler are
     // what they were
     salt_ = recipe_.compile_flags + "\nclang " + std::to_string(SizeOf(ToolPath(layout_, recipe_, "clang"))) + "\n";
+    if (recipe_.target == Target::MachO) {
+        // the compiler's own bytes: the tool may be a script that runs another (a development folder's), and a script's size says nothing of
+        // the compiler it runs, so its content counts too (sdk/host/game_code_dylib.sh writes the real compiler's size and date into it)
+        std::string tool_key;
+        if (KeyOf("", ToolPath(layout_, recipe_, "clang"), tool_key)) salt_ += "clang content " + tool_key + "\n";
+    }
     jobs_.clear();
     progress_.bytes_total = 0;
     uint64_t reused = 0;
@@ -756,10 +762,18 @@ bool WriteAliasResponse(const fs::path& exports_def, const fs::path& overrides, 
         why = "cannot read " + U8(overrides);
         return false;
     }
+    constexpr const char* kBlank = " \t\r\n";
     std::set<std::string> overridden;
     for (std::string line; std::getline(over, line);) {
-        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
-        if (!line.empty() && line[0] != '#') overridden.insert(line);
+        size_t from = line.find_first_not_of(kBlank);
+        if (from == std::string::npos || line[from] == '#') continue;
+        overridden.insert(line.substr(from, line.find_last_not_of(kBlank) + 1 - from));
+    }
+    // The executable always overrides something (its own replacements), so a list with no name in it is one that was not made: the link
+    // would then give the dylib every name, and its recompiled bodies would win over the executable's replacements.
+    if (overridden.empty()) {
+        why = U8(overrides) + " names no override (an empty list would make the dylib define every function the executable replaces)";
+        return false;
     }
     std::ifstream def(exports_def);
     if (!def) {
@@ -767,13 +781,14 @@ bool WriteAliasResponse(const fs::path& exports_def, const fs::path& overrides, 
         return false;
     }
     std::string text;
-    std::set<std::string> seen;
+    std::set<std::string> seen, listed;
     constexpr char kPrefix[] = "__imp__sub_";  // the body of sub_X
     for (std::string line; std::getline(def, line);) {
-        size_t at = line.find_first_not_of(" \t");
+        size_t at = line.find_first_not_of(kBlank);
         if (at == std::string::npos || line.compare(at, sizeof(kPrefix) - 1, kPrefix) != 0) continue;
-        size_t end = line.find_last_not_of(" \t\r") + 1;
-        std::string impl = line.substr(at, end - at), name = impl.substr(7);  // "__imp__" is 7 characters
+        // the name ends where the .def syntax goes on: DATA, an @ordinal, = another name, a comment
+        std::string impl = line.substr(at, line.find_first_of(" \t\r=@;", at) - at), name = impl.substr(7);  // "__imp__" is 7 characters
+        if (!listed.insert(name).second) continue;
         stats.listed++;
         if (overridden.count(name)) {
             seen.insert(name);

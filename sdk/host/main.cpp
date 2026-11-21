@@ -294,7 +294,10 @@ static bool LoadGameCode(const std::filesystem::path& dylib, std::wstring& probl
             return false;
         case dispatch::LoadStatus::NotLoaded:
             code = kExitNoGameCode;
-            problem = name + L" would not load (" + detail + L"): it may be damaged. Delete it and start the game to build it again.";
+            if (r.system_missing)  // not a stale dylib: building it again here would give the same one
+                problem = name + L" would not load: " + detail + L". This version of the game needs a newer macOS.";
+            else
+                problem = name + L" would not load (" + detail + L"): it may be damaged. Delete it and start the game to build it again.";
             return false;
         case dispatch::LoadStatus::NoTables:
         case dispatch::LoadStatus::WrongExeName:
@@ -327,6 +330,7 @@ static int CheckGameCode() {
     std::printf("functions: %zu\n", t.functions);
     std::printf("continuations: %zu\n", t.continuations);
     std::printf("externs: %zu of %zu filled\n", t.externs_filled, t.externs);
+    std::printf("overrides: %zu defined here, none by the dylib\n", t.overrides);
     std::printf("code: %08X..%08X entry %08X\n", t.code_base, t.code_end, t.entry);
     std::printf("load: %.1f ms\n", ms);
     return kExitOk;

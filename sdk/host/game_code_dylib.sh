@@ -17,15 +17,22 @@ done
 HERE=$(dirname "$(realpath "$0")")
 REPO=$(realpath "$REPO"); GEN=$(realpath "$GEN"); OUT=$(realpath "$OUT"); RT=$REPO/sdk/runtime
 CODE=$OUT/game_code; C=$OUT/compiler
-TC=$(realpath "${LLVM_MINGW:-$HOME/Projects/toolchains/llvm-mingw}")/bin
-[ -x "$TC/clang" ] && [ -x "$TC/lld" ] || { echo "LLVM_MINGW=$TC has no clang and lld: the toolchain built from source (see the README)" >&2; exit 1; }
+TC_DIR=${LLVM_MINGW:-$HOME/Projects/toolchains/llvm-mingw}
+[ -d "$TC_DIR/bin" ] || { echo "no toolchain at $TC_DIR (LLVM_MINGW): the llvm-mingw built from source, whose lld has the Mach-O port (see the README)" >&2; exit 1; }
+TC=$(realpath "$TC_DIR")/bin
+[ -x "$TC/clang" ] && [ -x "$TC/lld" ] || { echo "LLVM_MINGW=$TC_DIR has no clang and lld: the toolchain built from source (see the README)" >&2; exit 1; }
 JOBS=${JOBS:-$(sysctl -n hw.ncpu)}
 
+rm -rf "$C/include"  # what the headers were, not what they are
 mkdir -p "$C/include/cpu" "$C/include/freestanding"
 cp "$RT/cpu/x86_ops.h" "$RT/cpu/x86_context.h" "$C/include/cpu/"
 cp "$RT"/cpu/freestanding/* "$C/include/freestanding/"
-printf '#!/bin/sh\nexec "%s" "$@"\n' "$TC/clang" > "$C/clang"
-printf '#!/bin/sh\nexec "%s" -flavor darwin "$@"\n' "$TC/lld" > "$C/ld64.lld"
+# The tools are scripts that run the toolchain. The first start salts its object reuse with a tool's bytes, and a script says nothing of the
+# program it runs, so each carries the real program's size and date: a new compiler gives new objects.
+clang_id=$(stat -f "%z %m" "$(realpath "$TC/clang")")
+lld_id=$(stat -f "%z %m" "$(realpath "$TC/lld")")
+{ echo '#!/bin/sh'; echo "# clang $clang_id"; printf 'exec %q "$@"\n' "$TC/clang"; } > "$C/clang"
+{ echo '#!/bin/sh'; echo "# lld $lld_id"; printf 'exec %q -flavor darwin "$@"\n' "$TC/lld"; } > "$C/ld64.lld"
 chmod +x "$C/clang" "$C/ld64.lld"
 "$HERE/list_overrides.sh" "$OUT/$NAME" "$C/overrides.txt"
 

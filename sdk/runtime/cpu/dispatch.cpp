@@ -9,6 +9,8 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <mach-o/dyld.h>
+#include "app/macho_export.h"
 #endif
 
 #include <cxxabi.h>
@@ -64,6 +66,7 @@ std::vector<std::pair<const char*, X86Func**>>& Externs() {
 }
 void* g_dylib = nullptr;
 std::string g_dylib_stamp;
+size_t g_overrides = 0;
 #endif
 
 struct Export {
@@ -114,6 +117,12 @@ LoadResult Load(const std::filesystem::path& dll, const std::wstring& exe_name, 
 #endif
 
 #if defined(XBE_GAME_CODE_DLL) && defined(__APPLE__)
+// a name the loader could not bind: is it one of this program's (the runtime, an override, a recompiled body), so that the dylib was made for
+// another version of it, or one of the system's, which a dylib for a newer macOS may want?
+bool IsOurs(const std::string& name) {
+    return name.find("sub_") != std::string::npos || name.find("x86_") != std::string::npos || name.find("X86") != std::string::npos;
+}
+
 LoadResult Load(const std::filesystem::path& dylib, const char* stamp) {
     void* h = dlopen(dylib.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!h) {
@@ -121,27 +130,60 @@ LoadResult Load(const std::filesystem::path& dylib, const char* stamp) {
         g_dylib_stamp = why ? why : "";
         // the loader binds the dylib's undefined names to this executable before anything of the dylib runs: one the executable does
         // not export is a dylib for another version of it ("symbol not found in flat namespace '_sub_00012345'")
-        const bool unbound = g_dylib_stamp.find("symbol not found") != std::string::npos;
-        return {unbound ? LoadStatus::Stale : LoadStatus::NotLoaded, 0, "", g_dylib_stamp};
+        const size_t at = g_dylib_stamp.find("symbol not found");
+        if (at == std::string::npos) return {LoadStatus::NotLoaded, 0, "", g_dylib_stamp};
+        const size_t q1 = g_dylib_stamp.find('\'', at), q2 = q1 == std::string::npos ? q1 : g_dylib_stamp.find('\'', q1 + 1);
+        const std::string name = q2 == std::string::npos ? std::string() : g_dylib_stamp.substr(q1 + 1, q2 - q1 - 1);
+        if (!name.empty() && !IsOurs(name)) {
+            LoadResult r{LoadStatus::NotLoaded, 0, "", "it needs '" + name + "' from this Mac's system libraries, which this macOS does not have"};
+            r.system_missing = true;
+            return r;
+        }
+        return {LoadStatus::Stale, 0, "", g_dylib_stamp};
     }
+    auto refuse = [&](LoadResult r) {
+        dlclose(h);  // nothing of it has run (it has no initializers): it goes, and the next try starts clean
+        g_mappings = nullptr;
+        g_continuations = nullptr;
+        return r;
+    };
     g_mappings = reinterpret_cast<const X86FuncMapping*>(dlsym(h, "X86FuncMappings"));
     g_continuations = reinterpret_cast<const uint32_t*>(dlsym(h, "X86Continuations"));
     auto* lo = reinterpret_cast<const uint32_t*>(dlsym(h, "X86CodeBase"));
     auto* hi = reinterpret_cast<const uint32_t*>(dlsym(h, "X86CodeEnd"));
     auto* entry = reinterpret_cast<const uint32_t*>(dlsym(h, "X86EntryPoint"));
-    if (!g_mappings || !g_continuations || !lo || !hi || !entry) return {LoadStatus::NoTables, 0, "", "the tables are missing"};
+    if (!g_mappings || !g_continuations || !lo || !hi || !entry) return refuse({LoadStatus::NoTables, 0, "", "the tables are missing"});
     // as on Windows: a dylib made for another build of this executable binds all the same, and then calls the wrong code
     const char* dylib_stamp = reinterpret_cast<const char*>(dlsym(h, "X86GameCodeStamp"));
     if (!dylib_stamp || std::strcmp(dylib_stamp, stamp) != 0) {
         g_dylib_stamp = dylib_stamp ? dylib_stamp : "";
-        return {LoadStatus::Stale, 0, g_dylib_stamp.c_str()};
+        return refuse({LoadStatus::Stale, 0, g_dylib_stamp.c_str()});
     }
+    // The dylib must define none of the functions this executable overrides. Its link leaves their names undefined (so they bind here), from a
+    // list of the overrides made when the executable was built: a list that is stale or empty would make the dylib define them, and the
+    // recompiled originals would run in place of the replacements without a word. The names this executable defines are read from its own
+    // file; each must be absent from the dylib.
+    char self[4096];
+    uint32_t self_size = sizeof self;
+    std::vector<std::string> overrides;
+    std::string why;
+    if (_NSGetExecutablePath(self, &self_size) != 0 || !macho::DefinedNames(std::filesystem::weakly_canonical(self), "sub_", overrides, why))
+        return refuse({LoadStatus::NoTables, 0, "", "this program's own overrides could not be read (" + (why.empty() ? std::string("its path is too long") : why) + ")"});
+    for (const std::string& name : overrides)
+        if (dlsym(h, name.c_str())) {
+            g_dylib_stamp = "the dylib defines " + name + ", which this executable overrides: it was linked with a list of overrides that is not this executable's";
+            return refuse({LoadStatus::Stale, 0, "", g_dylib_stamp});
+        }
     // what the executable calls in the dylib (its overrides call the recompiled body they replace): each by name
     for (auto& [name, slot] : Externs()) {
         *slot = reinterpret_cast<X86Func*>(dlsym(h, name));
-        if (!*slot) return {LoadStatus::NoTables, 0, "", std::string("the dylib has no ") + name};
+        if (!*slot) {
+            for (auto& [n2, s2] : Externs()) *s2 = nullptr;
+            return refuse({LoadStatus::NoTables, 0, "", std::string("the dylib has no ") + name});
+        }
     }
     g_dylib = h;
+    g_overrides = overrides.size();
     g_lo = *lo;
     g_hi = *hi;
     g_entry = *entry;
@@ -152,6 +194,7 @@ Tables Describe() {
     Tables t;
     for (const X86FuncMapping* m = g_mappings; m && m->host; m++) t.functions++;
     for (const uint32_t* c = g_continuations; c && *c; c++) t.continuations++;
+    t.overrides = g_overrides;
     t.externs = Externs().size();
     for (auto& [name, slot] : Externs()) t.externs_filled += *slot != nullptr;
     t.code_base = g_lo;
