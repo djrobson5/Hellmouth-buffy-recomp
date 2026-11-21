@@ -6,6 +6,8 @@ Hellmouth is a static recompilation, not an emulator. The game's x86 code is tra
 a Mac program, and the Xbox kernel and libraries are implemented on the Mac. It also adds something the original never had:
 28 achievements, built into the game.
 
+<a href="https://recomplauncher.com/game/hellmouth-buffy-recomp"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
+
 > **No game files are included,** and no code generated from them. The installer builds the app on your Mac from your own
 > copy of the disc. A built copy contains the recompiled game, so there's no ready-made app to download, and please don't
 > share one. Hellmouth is an unofficial fan
@@ -82,6 +84,11 @@ You need Windows 10 or 11 (64 bit) and a disc image (.iso) of the USA release ma
 3. Choose your disc image. The first start builds the game from it, which takes a few minutes, once. Then choose Start.
 
 `README.txt` in the folder has the rest: where saves are kept, updating to a new version, and what to do if something goes wrong.
+
+**With RecompLauncher.** Instead of these steps, install Hellmouth from [RecompLauncher](https://recomplauncher.com) (the badge above): it asks
+for your disc image, builds the game from it and starts it, and keeps it up to date. It keeps everything the game writes, the saves
+(`hdd\E`), `achievements.txt`, `settings.toml`, `logs\` and the built game, in a folder named `recompdata` inside the game's folder, and an
+update leaves that folder alone. The launcher's page for the game has the common settings; the game's own menu (F10) has the rest.
 
 ## Building it by hand
 

@@ -24,6 +24,14 @@ Your saves, settings and logs
 They are beside Buffy.exe (hdd\, settings.toml, logs\, Screenshots\, and achievements\ and Buffy.ico, the pictures made from your
 disc), unless you start it with --data "<folder>" to keep them elsewhere. To start again from the disc, delete the build folder (and cache\game-code).
 
+With RecompLauncher
+-------------------
+If you use RecompLauncher (https://recomplauncher.com), install Hellmouth from it instead of unzipping this folder yourself: it asks for
+your disc image, builds the game from it, starts it, and updates it for you. It keeps everything the game writes (your saves in hdd\,
+achievements.txt, settings.toml, logs\, and the built game) in a folder named recompdata inside the game's folder, and an update leaves
+that folder alone. The launcher makes its own shortcuts, so the game makes none. The rest of this file applies, with recompdata where it
+says "beside Buffy.exe". Keep your disc image where it is: the game reads it while you play.
+
 Updating to a new version
 -------------------------
 Everything you keep is in this folder: hdd\ (your saves), achievements.txt (what you have earned), settings.toml and
