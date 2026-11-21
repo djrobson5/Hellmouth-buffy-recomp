@@ -3,6 +3,8 @@
 # as the player's PC will link them: nothing is left undefined, and the DLL imports exactly what the executable exports.
 #   tools/check_game_code_dll.sh [build folder]    default out/build/win-x64-mingw; LLVM_MINGW names the toolchain
 # Prints PASS or FAIL for each check and the lists behind them; exits 1 on a FAIL.
+# The last group of checks compiles tools/library_calls.cpp, a synthetic stand-in for recompiled code that uses every library
+# call the recompiler can emit (not only the ones this game's code uses), and links it against the executable's import library.
 cd "$(dirname "$0")/.."
 B=${1:-out/build/win-x64-mingw}
 TC=${LLVM_MINGW:-$HOME/Projects/toolchains/llvm-mingw}/bin
@@ -28,12 +30,35 @@ echo "--- DLL imports that are not recompiled functions:"; grep -v '^sub_' $W/dl
 echo "--- exe exports that are recompiled functions (overrides): $(grep -c '^sub_' $W/exe_exports.txt)"
 
 diff -q $W/needs_exe.txt $W/dll_imports.txt >/dev/null; chk $? "undefined in the DLL's objects, less what it has itself, == the DLL's import table"
+
+# the synthetic code, compiled and linked as the game code DLL is: the flags of the executable's game_code_flags.h
+CF=$(sed -n 's/#define XBE_GAME_CODE_COMPILE_FLAGS L"\(.*\)"/\1/p' $B/game_code/game_code_flags.h)
+LF=$(sed -n 's/#define XBE_GAME_CODE_LINK_FLAGS L"\(.*\)"/\1/p' $B/game_code/game_code_flags.h)
+LC=$W/libcalls; mkdir -p $LC
+$TC/clang $CF -isystem $B/game_code/include/freestanding -I$B/game_code/include -c tools/library_calls.cpp -o $LC/lc.obj 2> $LC/compile.log; chk $? "tools/library_calls.cpp compiles as the game code does (the freestanding headers, no C or C++ library)"
+$TC/lld-link $LF /implib:$LC/lc.lib /out:$LC/lc.dll $B/game_code/Buffy.lib $LC/lc.obj > $LC/link.log 2>&1; chk $? "and links against Buffy.lib with nothing undefined"
+[ -s $LC/compile.log -o -s $LC/link.log ] && { cat $LC/compile.log $LC/link.log | head -20; }
+$TC/llvm-nm -u $LC/lc.obj | awk 'NF==2{print $2}' | sed 's/^__imp__Z/_Z/' | sort -u > $LC/undef.txt
+$TC/llvm-objdump -p $LC/lc.dll | awk '/DLL Name:/{d=$3} /^ +[0-9]+ +[^ ]+$/ && d=="Buffy.exe"{print $2}' | sort -u > $LC/imports.txt
+# the calls the compiler must leave to the executable for what the generator writes (inline forms of sqrt and the rest vary
+# with the code around them, so they are not asserted in this list; the link proves they are exported)
+required="___chkstk_ms atan2 cos exp2 fmod frexp ldexp log2 memcpy memmove memset remainder sin sqrt sqrtf tan _ZSt9terminatev _Unwind_Resume __cxa_begin_catch __cxa_end_catch __cxa_rethrow __gxx_personality_seh0 _Z9x86_icallR10X86ContextPhj _Z10x86_kernelR10X86ContextPhj _Z14x86_try_resumeR10X86ContextPhj _Z8x86_privR10X86ContextjPKc _Z8x86_trapR10X86ContextjPKc _Z9x86_cpuidR10X86Context _Z9x86_rdtscv _Z9x86_traceR10X86Contextjj"
+missing=""; for n in $required; do grep -qx "$n" $LC/undef.txt || missing="$missing $n"; done
+[ -z "$missing" ]; chk $? "the synthetic object leaves undefined every library call the generator can need (not found:${missing:- none})"
+echo "--- library calls and API the synthetic code imports: $(wc -l < $LC/imports.txt)"; sed 's/^/    /' $LC/imports.txt | tr '\n' ' ' | fold -s -w 150; echo
+# every call the generator writes in its output, every builtin and every inline helper of x86_ops.h is used in the synthetic code
+grep -ohE '"[^"]*"' sdk/tools/recomp/codegen*.cpp | grep -oE '(std::[a-z_0-9]+|__builtin_[a-z_0-9]+|__atomic_[a-z_0-9]+|(x87|sse|mmx|x86)_[a-z_0-9]+)\(' | sed 's/($//; s/^std:://' | sort -u > $W/gen_calls.txt
+grep -hE '^(inline|constexpr) ' sdk/runtime/cpu/x86_ops.h | sed -E 's/\(.*//; s/.*[ *&]//' | sort -u > $W/ops_inline.txt
+notused=""; for n in $(cat $W/gen_calls.txt $W/ops_inline.txt | sort -u); do grep -qE "(^|[^a-z_0-9])$n *[(<]" tools/library_calls.cpp || notused="$notused $n"; done
+[ -z "$notused" ]; chk $? "tools/library_calls.cpp uses all $(cat $W/gen_calls.txt $W/ops_inline.txt | sort -u | wc -l | tr -d ' ') calls the generator writes and helpers x86_ops.h defines (not used:${notused:- none})"
 missing=$(comm -13 $W/exe_exports.txt $W/dll_imports.txt); [ -z "$missing" ]; chk $? "every DLL import is exported by Buffy.exe (missing: ${missing:-none})"
-# what the executable exports beyond that: x86_trace (called only by a function traced through [xbe] trace in the config) and the
-# overrides of names this image does not have (sub_FFFFxxxx, from the SDK's own list of names, which no recompiled code calls)
-extra=$(comm -23 $W/exe_exports.txt $W/dll_imports.txt | grep -vE '^(sub_FFFF[0-9A-F]{4}|_Z9x86_traceR10X86Contextjj)$')
-[ -z "$extra" ]; chk $? "Buffy.exe exports nothing else the DLL does not import (other: ${extra:-none})"
-echo "--- exported, not imported: $(comm -23 $W/exe_exports.txt $W/dll_imports.txt | grep -c '^sub_FFFF') overrides of names the image lacks, and $(comm -23 $W/exe_exports.txt $W/dll_imports.txt | grep -c x86_trace) x86_trace"
+# what the executable exports beyond that is what the synthetic code imports (library calls this game's code happens not to make,
+# below), and the overrides of names this image does not have (sub_FFFFxxxx, from the SDK's own list of names, which no recompiled
+# code calls): the check is exact in both directions
+extra=$(comm -23 $W/exe_exports.txt <(sort -u $W/dll_imports.txt $LC/imports.txt) | grep -vE '^sub_FFFF[0-9A-F]{4}$')
+[ -z "$extra" ]; chk $? "Buffy.exe exports nothing that neither this game's DLL nor the synthetic code imports (other: ${extra:-none})"
+echo "--- exported, imported by the synthetic code only: $(comm -23 <(sort -u $LC/imports.txt) $W/dll_imports.txt | tr '\n' ' ')"
+echo "--- exported, imported by neither: $(comm -23 $W/exe_exports.txt <(sort -u $W/dll_imports.txt $LC/imports.txt) | grep -c '^sub_FFFF') overrides of names the image lacks"
 dups=$(comm -12 <(sort -u $W/local_names.txt) $W/dll_imports.txt | wc -l)
 echo "--- overridden functions the DLL imports (so the exe's body is the one that runs): $dups"
 

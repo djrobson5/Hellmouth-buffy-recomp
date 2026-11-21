@@ -107,7 +107,8 @@ export LLVM_MINGW=<folder of llvm-mingw>
 cmake --preset win-x64-mingw
 cmake --build out/build/win-x64-mingw                    # Buffy.exe
 cmake --build out/build/win-x64-mingw --target game_code_dll   # game_code/Buffy.dll, beside the exe's import library
-tools/check_game_code_dll.sh                             # the exe and the DLL link with nothing undefined, and agree
+tools/check_game_code_dll.sh                             # the exe and the DLL link with nothing undefined, and agree; and tools/library_calls.cpp,
+                                                         # which uses every library call the recompiler can emit, links against the exe too
 tools/sim_first_start.sh                                 # the first start's commands, in a folder with a space and an accent
 ```
 

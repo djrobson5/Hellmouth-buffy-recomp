@@ -1,7 +1,9 @@
 ; What the game code DLL calls in this executable besides its own API (X86_HOST_API and X86_FUNC export themselves, by
 ; attribute): the C++ exception runtime, which the DLL's frames unwind through, and the C library, which it is built without.
 ; Written by CMake into the build folder as the executable's module definition file, @XBE_TARGET@.exe being its own name.
-; It lists exactly what the DLL imports of these; the checks under "Game code DLL" in README.md compare the two.
+; It lists what the DLL imports of these and what the recompiler can emit for other game code than this image's: remainder
+; (FPREM1) and ___chkstk_ms (the probe for a frame over 4 KB, from the compiler's runtime library, which the executable links).
+; tools/library_calls.cpp uses every such call, and the checks under "Game code DLL" in README.md compare all of it.
 NAME @XBE_TARGET@.exe
 EXPORTS
     __gxx_personality_seh0
@@ -18,9 +20,11 @@ EXPORTS
     tan = x86_tan
     atan2 = x86_atan2
     fmod = x86_fmod
+    remainder = x86_remainder
     sqrt = x86_sqrt
     sqrtf = x86_sqrtf
     log2 = x86_log2
     exp2 = x86_exp2
     ldexp = x86_ldexp
     frexp = x86_frexp
+    ___chkstk_ms

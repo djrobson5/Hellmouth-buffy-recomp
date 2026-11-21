@@ -14,6 +14,7 @@ double x86_cos(double v) { return std::cos(v); }
 double x86_tan(double v) { return std::tan(v); }
 double x86_atan2(double y, double x) { return std::atan2(y, x); }
 double x86_fmod(double a, double b) { return std::fmod(a, b); }
+double x86_remainder(double a, double b) { return std::remainder(a, b); }
 double x86_sqrt(double v) { return std::sqrt(v); }
 float x86_sqrtf(float v) { return std::sqrt(v); }
 double x86_log2(double v) { return std::log2(v); }

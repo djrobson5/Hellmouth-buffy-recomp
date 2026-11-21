@@ -22,7 +22,9 @@ What this port changed:
     `x86_icall` threw kept per thread. The exception that reaches it must be an `X86Resume`, so another one passing through the
     DLL's frames is rethrown. `x86_context.h` declares the tables `extern "C"`.
   - `sdk/runtime/cpu/libc_exports.cpp`, `host_exports.def.in`: the executable's exports that are not its own API: the C++ exception
-    runtime and wrappers for the C library calls the DLL leaves undefined (an upstream list adapted to what this code calls).
+    runtime and wrappers for the C library calls the DLL leaves undefined (an upstream list adapted to what this code calls), and
+    for every call the recompiler can write for any game (`remainder` for FPREM1, `___chkstk_ms` for a frame over 4 KB), which
+    `tools/library_calls.cpp` uses in a synthetic compile and link that `tools/check_game_code_dll.sh` runs, with no game data.
   - `sdk/runtime/cpu/freestanding/`: stand-ins for `<cstdint>`, `<cstring>`, `<cmath>`, `<limits>` and `<type_traits>`, for the
     compile without a C++ library.
   - `sdk/runtime/app/game_code.cpp`, `app.h`, `main.cpp`: `PrepareGameCode` loads `IMAGE_LIBRARY` from beside the executable and ends
