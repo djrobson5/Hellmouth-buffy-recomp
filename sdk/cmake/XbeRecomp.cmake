@@ -1,5 +1,6 @@
 # Original Xbox static recompilation: xbe_recomp, the host runtime and add_xbe_image()
 include_guard(GLOBAL)
+include(${CMAKE_CURRENT_LIST_DIR}/XbeAbi.cmake)
 
 get_filename_component(XBE_SDK_DIR ${CMAKE_CURRENT_LIST_DIR}/.. ABSOLUTE)
 # build scripts find the SDK's xdk folder and THIRD_PARTY.txt through this
@@ -148,38 +149,9 @@ function(xbe_game_code_dll target GEN GEN_SOURCES CONFIG_FILE GAME_DIR)
     # (-DXBE_GAME_CODE_ABI=<token>), which stores it in the DLL's X86GameCodeStamp beside the image and names it was made from, and into
     # the executable (game_code_flags.h, for game_code.cpp), which compares the two before it uses the DLL. A change to any of these
     # files gives the DLL a new compile: this errs towards compiling again. Written to game_code/abi_inputs.txt.
-    file(GLOB freestanding CONFIGURE_DEPENDS ${XBE_SDK_DIR}/runtime/cpu/freestanding/*)
-    set(headers ${XBE_SDK_DIR}/runtime/cpu/x86_ops.h ${XBE_SDK_DIR}/runtime/cpu/x86_context.h)
-    set(override_dirs ${XBE_SDK_DIR}/runtime/xdk ${CMAKE_CURRENT_SOURCE_DIR}/src/${GAME_DIR})
-    file(GLOB_RECURSE override_files CONFIGURE_DEPENDS ${XBE_SDK_DIR}/runtime/xdk/* ${CMAKE_CURRENT_SOURCE_DIR}/src/${GAME_DIR}/*)
-    file(GLOB recomp_files CONFIGURE_DEPENDS ${XBE_SDK_DIR}/tools/recomp/*.cpp ${XBE_SDK_DIR}/tools/recomp/*.h)
-    set(abi_files ${headers} ${freestanding} ${XBE_SDK_DIR}/runtime/cpu/host_exports.def.in ${override_files} ${recomp_files})
-    list(REMOVE_DUPLICATES abi_files)
-    list(SORT abi_files)
+    # (the computation is XbeAbi.cmake's, which sdk/host/build.sh runs as a script for the macOS build: this is its Windows use)
+    xbe_abi_write(windows ${XBE_SDK_DIR} ${CMAKE_CURRENT_SOURCE_DIR} ${GAME_DIR} ${CODE} CONFIGURE_DEPENDS)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${abi_files})
-
-    # the flags of the first start (and of game_code_flags.h): one place
-    set(compile_flags "-target x86_64-w64-mingw32 -std=c++20 -O2 -march=x86-64-v2 -fno-strict-aliasing -fms-extensions -nostdinc -nostdinc++ -w -DNDEBUG -DX86_GAME_CODE")
-    set(link_flags "/dll /noentry /nodefaultlib /machine:x64 /opt:noicf")
-    set(abi_text "xbe-game-code-abi 1\ncompile ${compile_flags}\nlink ${link_flags}\n")
-    foreach(f ${abi_files})
-        file(SHA1 ${f} f_sha1)
-        file(RELATIVE_PATH f_rel ${CMAKE_CURRENT_SOURCE_DIR} ${f})
-        string(APPEND abi_text "${f_sha1} ${f_rel}\n")
-    endforeach()
-    string(SHA1 abi_sha1 "${abi_text}")
-    string(SUBSTRING ${abi_sha1} 0 32 abi_hex)
-    set(abi_token abi${abi_hex})   # a bare token, so that no quote passes through a shell or a command line
-    set(abi_dirs)
-    foreach(d ${override_dirs})
-        file(RELATIVE_PATH d_rel ${CMAKE_CURRENT_SOURCE_DIR} ${d})
-        string(APPEND abi_dirs "override-dir ${d_rel}\n")
-    endforeach()
-    file(WRITE ${CODE}/abi_inputs.txt "token ${abi_token}\n${abi_dirs}${abi_text}")
-    # the compile gets the token; the hash above does not include it
-    string(APPEND compile_flags " -DXBE_GAME_CODE_ABI=${abi_token}")
-    set(game_code_flags "// written by CMake (xbe_game_code_dll): the flags that compile and link the game code DLL, and its ABI token\n#pragma once\n#define XBE_GAME_CODE_ABI ${abi_token}\n#define XBE_GAME_CODE_COMPILE_FLAGS L\"${compile_flags}\"\n#define XBE_GAME_CODE_LINK_FLAGS L\"${link_flags}\"\n")
-    file(CONFIGURE OUTPUT ${CODE}/game_code_flags.h CONTENT "${game_code_flags}" @ONLY)
     separate_arguments(compile_args UNIX_COMMAND "${compile_flags}")
     separate_arguments(link_args UNIX_COMMAND "${link_flags}")
 
