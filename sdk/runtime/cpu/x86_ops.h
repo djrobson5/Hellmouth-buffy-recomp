@@ -25,13 +25,27 @@ typedef double __attribute__((aligned(1), may_alias)) x86_f64u;
 // X86_GAME_CODE is defined for that compile and XBE_GAME_CODE_DLL for the executable it belongs to. The executable
 // exports the runtime (X86_HOST_API) and the functions that override recompiled ones (X86_FUNC), which the DLL imports; a
 // recompiled function nothing overrides stays in the DLL, found there by the name that X86_WEAK_FUNC falls back to.
-// With neither defined (macOS, the harness, a Windows build that links the code in) these all expand to nothing.
-#if defined(X86_GAME_CODE)
+// With neither defined (the harness, a Windows build that links the code in) these all expand to nothing.
+// On macOS the DLL is a dylib (arm64, built by the first start from the same sources) and the same split holds, by other means:
+// the dylib's undefined names bind to the executable when it is loaded (-undefined dynamic_lookup; the executable exports the
+// names that carry X86_HOST_API and X86_FUNC, with -export_dynamic and -fvisibility=hidden), and the dylib must not define
+// a name the executable overrides, so X86_WEAK_FUNC defines nothing: the link gives each function that nothing overrides its
+// name as an alias of its body (-alias __imp_sub_X sub_X, from a response file that app/game_build.cpp writes from exports.def
+// and the executable's list of overrides). The executable reaches the dylib's bodies (X86_EXTERN_FUNC) through slots that
+// dispatch::Load fills with dlsym, as a Mach-O executable cannot import what is loaded after it starts.
+#if defined(X86_GAME_CODE) && defined(__APPLE__)
+#define X86_HOST_API
+#define X86_HOST_EXPORT
+#define X86_WEAK_FUNC(name, impl)
+#elif defined(X86_GAME_CODE)
 #define X86_HOST_API __declspec(dllimport)
 #define X86_HOST_EXPORT
 #define X86_WEAK_FUNC(name, impl) __pragma(comment(linker, "/alternatename:" #name "=" #impl))
 #else
-#if defined(XBE_GAME_CODE_DLL)
+#if defined(XBE_GAME_CODE_DLL) && defined(__APPLE__)
+#define X86_HOST_API __attribute__((visibility("default")))
+#define X86_HOST_EXPORT __attribute__((visibility("default")))
+#elif defined(XBE_GAME_CODE_DLL)
 #define X86_HOST_API __declspec(dllexport)
 #define X86_HOST_EXPORT __declspec(dllexport)
 #else
@@ -43,8 +57,22 @@ typedef double __attribute__((aligned(1), may_alias)) x86_f64u;
 #endif
 
 #define X86_FUNC(name) extern "C" X86_HOST_EXPORT void name(X86Context& __restrict ctx, uint8_t* base)
+#if defined(XBE_GAME_CODE_DLL) && defined(__APPLE__) && !defined(X86_GAME_CODE)
+// the executable's reach into the dylib: a call through a slot that dispatch::Load fills by name (it fails, naming the symbol,
+// when the dylib lacks one). X86_HOST_API: defined in cpu/dispatch.cpp.
+X86_HOST_API X86Func* x86_extern_register(const char* name, X86Func** slot);
+#define X86_EXTERN_SLOT_(name)                                                          \
+    static X86Func* name##_slot = x86_extern_register(#name, &name##_slot);             \
+    static inline void name(X86Context& __restrict ctx, uint8_t* base) { name##_slot(ctx, base); }
+#define X86_EXTERN_FUNC(name) X86_EXTERN_SLOT_(name)  // (the name may be a macro, GUEST_ORIG(x): expanded before it is pasted)
+#else
 #define X86_EXTERN_FUNC(name) extern "C" void name(X86Context& __restrict ctx, uint8_t* base)
+#endif
 // [xbe] trace: logs the caller and arguments on entry, eax on return
+#if defined(X86_GAME_CODE) && defined(__APPLE__)
+// the dylib has no weak definition to fall back to: a traced function would need its own alias (not made)
+#define X86_TRACED_FUNC(name, impl, va) static_assert(sizeof(#name) == 0, "[xbe] trace is not supported in the macOS game code dylib")
+#else
 #define X86_TRACED_FUNC(name, impl, va)                                        \
     extern "C" void name##_traced(X86Context& __restrict ctx, uint8_t* base) { \
         uint32_t x86_ret = x86_trace(ctx, va, 0);                              \
@@ -52,6 +80,7 @@ typedef double __attribute__((aligned(1), may_alias)) x86_f64u;
         x86_trace(ctx, va, x86_ret);                                           \
     }                                                                          \
     X86_WEAK_FUNC(name, name##_traced)
+#endif
 
 #define X86_PUSH32(v)            \
     do {                         \

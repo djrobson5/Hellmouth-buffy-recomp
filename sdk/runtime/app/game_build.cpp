@@ -6,6 +6,7 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <set>
 #include <thread>
 
 #include "app/pe_export.h"
@@ -654,6 +655,48 @@ DllState CheckDll(const fs::path& dll, const std::string& stamp, std::string* fo
     }
     if (found) *found = text;
     return text == stamp ? DllState::Current : DllState::Stale;
+}
+
+bool WriteAliasResponse(const fs::path& exports_def, const fs::path& overrides, const fs::path& out, AliasStats& stats, std::string& why) {
+    stats = {};
+    std::ifstream over(overrides);
+    if (!over) {
+        why = "cannot read " + U8(overrides);
+        return false;
+    }
+    std::set<std::string> overridden;
+    for (std::string line; std::getline(over, line);) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (!line.empty() && line[0] != '#') overridden.insert(line);
+    }
+    std::ifstream def(exports_def);
+    if (!def) {
+        why = "cannot read " + U8(exports_def);
+        return false;
+    }
+    std::string text;
+    std::set<std::string> seen;
+    constexpr char kPrefix[] = "__imp__sub_";  // the body of sub_X
+    for (std::string line; std::getline(def, line);) {
+        size_t at = line.find_first_not_of(" \t");
+        if (at == std::string::npos || line.compare(at, sizeof(kPrefix) - 1, kPrefix) != 0) continue;
+        size_t end = line.find_last_not_of(" \t\r") + 1;
+        std::string impl = line.substr(at, end - at), name = impl.substr(7);  // "__imp__" is 7 characters
+        stats.listed++;
+        if (overridden.count(name)) {
+            seen.insert(name);
+            stats.overridden++;
+            continue;
+        }
+        text += "-alias _" + impl + " _" + name + "\n";
+        stats.aliased++;
+    }
+    stats.unused = overridden.size() - seen.size();
+    if (!WriteFile(out, text.data(), text.size())) {
+        why = "cannot write " + U8(out);
+        return false;
+    }
+    return true;
 }
 
 std::string LogTail(const fs::path& log, size_t bytes) {

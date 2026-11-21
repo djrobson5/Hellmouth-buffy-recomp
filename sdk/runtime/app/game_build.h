@@ -139,6 +139,20 @@ Outcome Build(const Layout& layout, const Recipe& recipe, const ReadInputs& read
 enum class DllState { Missing, Current, Stale, Unreadable };
 DllState CheckDll(const fs::path& dll, const std::string& stamp, std::string* found = nullptr);
 
+// macOS: the response file for the dylib's link. In a Mach-O dylib a weak definition always beats the executable's override, so the
+// generated code defines no weak name (X86_WEAK_FUNC in cpu/x86_ops.h expands to nothing there) and the link gives each recompiled
+// function its name as an alias of its body instead: "-alias ___imp__sub_X _sub_X", for every `__imp__sub_X` that exports.def lists
+// except the names the executable overrides (one name a line in `overrides`, as sdk/host/list_overrides.sh writes it from the built
+// executable). A function that is overridden keeps its name undefined in the dylib, which binds to the executable when it is loaded.
+// (44 thousand lines: on the command line they would pass the argument limit.)
+struct AliasStats {
+    size_t listed = 0;      // recompiled functions in exports.def
+    size_t overridden = 0;  // of those, the ones the executable overrides
+    size_t aliased = 0;     // lines written
+    size_t unused = 0;      // overrides that exports.def does not list (names this image lacks)
+};
+bool WriteAliasResponse(const fs::path& exports_def, const fs::path& overrides, const fs::path& out, AliasStats& stats, std::string& why);
+
 // the last bytes of a text file, from a whole line: where a tool's error is
 std::string LogTail(const fs::path& log, size_t bytes);
 
