@@ -13,11 +13,14 @@ What it checks:
      lines of the generated C++ are looked for in every file (a copy of any of them, whole or in part, would hold some)
   4. the headers that ship are the ones the ABI token was computed from (abi_inputs.txt), and the executable's stamp is the DLL's
   5. none names the machine or the user that built it (/Users/<name>/, the home folder, the user name)
-  6. the zip holds the folder's files and nothing else, with no links
+  6. recomplauncher.json, the file RecompLauncher reads beside Buffy.exe, is JSON with no @VERSION@ left, and its setup version is the release's
+     (tools/check_recomplauncher.py checks the rest of it)
+  7. the zip holds the folder's files and nothing else, with no links
 """
 import argparse
 import getpass
 import hashlib
+import json
 import mmap
 import os
 import re
@@ -25,9 +28,9 @@ import struct
 import sys
 import zipfile
 
-# every file the release holds: the exe, the compiler folder, the licences and the player's README
+# every file the release holds: the exe, the compiler folder, the licences, the player's README and RecompLauncher's file
 ALLOWED = [
-    r"Buffy\.exe", r"README\.txt", r"LICENSE", r"THIRD_PARTY\.txt",
+    r"Buffy\.exe", r"README\.txt", r"LICENSE", r"THIRD_PARTY\.txt", r"recomplauncher\.json",
     r"licenses/[A-Za-z0-9_.+-]+",
     r"compiler/(clang|lld-link|xbe_recomp|buffy_config)\.exe",
     r"compiler/(libLLVM-23|libclang-cpp|libc\+\+|libunwind)\.dll",
@@ -38,7 +41,7 @@ ALLOWED = [
 ]
 # files that have to be there
 REQUIRED = [
-    "Buffy.exe", "README.txt", "LICENSE", "THIRD_PARTY.txt", "licenses/LLVM-LICENSE.txt",
+    "Buffy.exe", "README.txt", "LICENSE", "THIRD_PARTY.txt", "recomplauncher.json", "licenses/LLVM-LICENSE.txt",
     "compiler/clang.exe", "compiler/lld-link.exe", "compiler/xbe_recomp.exe", "compiler/buffy_config.exe",
     "compiler/libLLVM-23.dll", "compiler/libclang-cpp.dll", "compiler/libc++.dll", "compiler/libunwind.dll",
     "compiler/sdk_names.txt", "compiler/Buffy.lib", "compiler/LLVM-LICENSE.txt",
@@ -206,7 +209,21 @@ def main():
     if len(exe_stamps) != 1 or exe_stamps != dll_stamps:
         problems.append("the executable's stamp is not the DLL's")
 
-    # 6. the zip
+    # 6. RecompLauncher's file
+    manifest = os.path.join(folder, "recomplauncher.json")
+    if os.path.isfile(manifest):
+        try:
+            with open(manifest, encoding="utf-8") as f:
+                text = f.read()
+            data = json.loads(text)
+            if "@" in text:
+                problems.append("recomplauncher.json has an @ in it: a placeholder of tools/recomplauncher.json.in was left")
+            if a.version and data.get("prepare", {}).get("version") != a.version:
+                problems.append("recomplauncher.json: the setup's version is %r, the release's is %s" % (data.get("prepare", {}).get("version"), a.version))
+        except ValueError as e:
+            problems.append("recomplauncher.json is not JSON: %s" % e)
+
+    # 7. the zip
     if a.zip:
         with zipfile.ZipFile(a.zip) as z:
             top = None

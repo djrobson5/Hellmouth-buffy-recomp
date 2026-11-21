@@ -1,0 +1,176 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "Hellmouth",
+  "repo": "djrobson5/Hellmouth-buffy-recomp",
+
+  "game": {
+    "kind": "iso_or_folder",
+    "label": "Your copy of the USA Xbox release of Buffy the Vampire Slayer: its disc image (.iso), or its folder with Default.xbe. Not Buffy: Chaos Bleeds, which is another game.",
+    "check": { "file": "Default.xbe", "xdvdfs": "Default.xbe" }
+  },
+
+  "start": {
+    "program": ["Buffy.exe"],
+    "args": ["--game={game}", "--data", "{data}", "--no-dialogs"]
+  },
+
+  "prepare": {
+    "program": ["Buffy.exe"],
+    "args": ["--prepare", "--game={game}", "--data", "{data}"],
+    "label": "Builds the game from your disc",
+    "timeout": 1800,
+    "done": ["{data}/build/Buffy.dll"],
+    "version": "@VERSION@"
+  },
+
+  "saves": ["{data}/hdd/E", "{data}/achievements.txt"],
+
+  "config": [
+    { "id": "main", "format": "toml", "file": [{ "path": "{data}/settings.toml" }] }
+  ],
+
+  "settings": [
+    {
+      "id": "vsync", "label": "V-Sync", "group": "Display",
+      "help": "Prevents tearing. The frame rate can't go above the screen's refresh rate.",
+      "choices": [
+        { "label": "On", "set": { "display/vsync": "true" } },
+        { "label": "Off", "set": { "display/vsync": "false" } }
+      ],
+      "defaults": { "display/vsync": "true" }
+    },
+    {
+      "id": "show_fps", "label": "Frame rate counter", "group": "Display",
+      "help": "Shows the frames per second in the top right corner.",
+      "choices": [
+        { "label": "Off", "set": { "display/show_fps": "false" } },
+        { "label": "On", "set": { "display/show_fps": "true" } }
+      ],
+      "defaults": { "display/show_fps": "false" }
+    },
+    {
+      "id": "render_resolution", "label": "Render resolution", "group": "Display",
+      "help": "How big the game is drawn compared with your screen. Above 100% is sharper and slower, below is faster and softer.",
+      "choices": [
+        { "label": "50%", "set": { "display/render_percent": "\"50\"" } },
+        { "label": "75%", "set": { "display/render_percent": "\"75\"" } },
+        { "label": "100% (screen's own)", "set": { "display/render_percent": "\"100\"" } },
+        { "label": "125%", "set": { "display/render_percent": "\"125\"" } },
+        { "label": "150%", "set": { "display/render_percent": "\"150\"" } },
+        { "label": "200%", "set": { "display/render_percent": "\"200\"" } },
+        { "label": "250%", "set": { "display/render_percent": "\"250\"" } },
+        { "label": "300%", "set": { "display/render_percent": "\"300\"" } }
+      ],
+      "defaults": { "display/render_percent": "\"100\"" }
+    },
+
+    {
+      "id": "renderer", "label": "Renderer", "group": "Picture",
+      "help": "Vulkan is the one the game was made on. Direct3D 12 is untested. Takes effect the next time the game starts.",
+      "choices": [
+        { "label": "Vulkan", "set": { "graphics/renderer": "\"1\"" } },
+        { "label": "Direct3D 12 (untested)", "set": { "graphics/renderer": "\"0\"" } }
+      ],
+      "defaults": { "graphics/renderer": "\"1\"" }
+    },
+    {
+      "id": "widescreen", "label": "Widescreen correction", "group": "Picture",
+      "help": "Shows more at the sides on a wide screen. Off keeps the original 4:3 picture, with bars at the sides.",
+      "choices": [
+        { "label": "Off", "set": { "graphics/widescreen": "false" } },
+        { "label": "On", "set": { "graphics/widescreen": "true" } }
+      ],
+      "defaults": { "graphics/widescreen": "false" }
+    },
+    {
+      "id": "brightness", "label": "Brightness", "group": "Picture",
+      "help": "1.00 is the game's own picture. Higher lifts the dark scenes without washing out white.",
+      "slider": { "key": "graphics/brightness", "min": 0.5, "max": 2, "step": 0.05, "format": "%.2f" },
+      "defaults": { "graphics/brightness": "1.00" }
+    },
+    {
+      "id": "texture_filtering", "label": "Texture filtering", "group": "Picture",
+      "help": "Keeps ground and walls sharp at a distance. Costs very little.",
+      "choices": [
+        { "label": "Game's own", "set": { "graphics/anisotropic_filtering": "\"0\"" } },
+        { "label": "2x", "set": { "graphics/anisotropic_filtering": "\"2\"" } },
+        { "label": "4x", "set": { "graphics/anisotropic_filtering": "\"4\"" } },
+        { "label": "8x", "set": { "graphics/anisotropic_filtering": "\"8\"" } },
+        { "label": "16x", "set": { "graphics/anisotropic_filtering": "\"16\"" } }
+      ],
+      "defaults": { "graphics/anisotropic_filtering": "\"0\"" }
+    },
+    {
+      "id": "smaa", "label": "SMAA", "group": "Picture",
+      "help": "Smooths jagged edges after the picture is drawn. Costs very little.",
+      "choices": [
+        { "label": "Off", "set": { "graphics/smaa": "false" } },
+        { "label": "On", "set": { "graphics/smaa": "true" } }
+      ],
+      "defaults": { "graphics/smaa": "false" }
+    },
+
+    {
+      "id": "vibration", "label": "Vibration", "group": "Controls",
+      "help": "How strongly the controller rumbles. 0 turns it off.",
+      "slider": { "key": "input/vibration", "min": 0, "max": 100, "step": 5, "format": "%d" },
+      "defaults": { "input/vibration": "100" }
+    },
+    {
+      "id": "keyboard", "label": "Keyboard and mouse", "group": "Controls",
+      "help": "Play with the keyboard and mouse as well as a controller.",
+      "choices": [
+        { "label": "On", "set": { "keyboard/enabled": "true" } },
+        { "label": "Off", "set": { "keyboard/enabled": "false" } }
+      ],
+      "defaults": { "keyboard/enabled": "true" }
+    },
+
+    {
+      "id": "achievement_notes", "label": "Achievement notes", "group": "Game",
+      "help": "A note in the corner of the screen when you earn an achievement.",
+      "choices": [
+        { "label": "On", "set": { "achievements/notify": "true" } },
+        { "label": "Off", "set": { "achievements/notify": "false" } }
+      ],
+      "defaults": { "achievements/notify": "true" }
+    },
+    {
+      "id": "pause_unfocused", "label": "Pause in the background", "group": "Game",
+      "help": "The game stops, picture and sound, while another window is in front, and carries on when you come back.",
+      "choices": [
+        { "label": "Off", "set": { "window/pause_unfocused": "false" } },
+        { "label": "On", "set": { "window/pause_unfocused": "true" } }
+      ],
+      "defaults": { "window/pause_unfocused": "false" }
+    }
+  ],
+
+  "folders": {
+    "logs": [{ "path": "{data}/logs" }],
+    "screenshots": [{ "path": "{data}/Screenshots" }]
+  },
+
+  "actions": [
+    { "id": "logs", "label": "Open logs", "help": "The game's log, and compile.log from building the game.", "open": "logs" },
+    { "id": "screenshots", "label": "Open screenshots", "help": "Pictures taken with the \\ key while you play.", "open": "screenshots" }
+  ],
+
+  "exit_codes": {
+    "0": "ok",
+    "2": "The game's files couldn't be found, or they are another game's. Pick your USA Xbox disc image of Buffy the Vampire Slayer again on the game's page.",
+    "3": "This is a different release of the game. Hellmouth needs the USA Xbox release of Buffy the Vampire Slayer.",
+    "4": "Your graphics card or its driver can't run the game's graphics (it needs Vulkan 1.2 or Direct3D 12). Update your graphics driver and try again.",
+    "5": "The settings file couldn't be read. Delete settings.toml in the game's recompdata folder to start again with the defaults.",
+    "6": "The graphics driver stopped or was reset while you were playing. Update your graphics driver and try again.",
+    "7": "The game's code is missing or wouldn't load. Set the game up again on its page to build it from your disc.",
+    "8": "The game was built for an older version of Hellmouth. Set the game up again on its page to build it again.",
+    "9": "Building the game from your disc failed. logs\\compile.log in the game's recompdata folder says why.",
+    "10": "The game couldn't start. logs\\buffy.log in the game's recompdata folder says why."
+  },
+
+  "system": {
+    "windows": { "version": "10", "graphics": { "vulkan": "1.2" } }
+  }
+}

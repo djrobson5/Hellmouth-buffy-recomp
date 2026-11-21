@@ -270,6 +270,21 @@ built and its stamp checks, and otherwise 9 with one line on stderr (`error: <st
 the game is not started and the settings are not read. `--clean-work` deletes the work folder afterwards. The lines go to the
 launcher's pipe, or to the console the program was started from.
 
+**RecompLauncher.** The release holds `recomplauncher.json` beside `Buffy.exe`, which [RecompLauncher](https://recomplauncher.com) reads to set the
+game up from the player's copy (an `.iso`, or a folder with `Default.xbe`), to start it and to show its settings. The source is
+`tools/recomplauncher.json.in`; `tools/package_windows.sh` fills in the release's version and puts the result in the release folder. Setting
+up runs `Buffy.exe --prepare --game=<copy> --data <recompdata>` (see "For a launcher"), done when `<recompdata>\build\Buffy.dll` is there;
+its `version` is the release's, so a player who set the game up with an older release has it built again, which is quick when the DLL is
+current. Play runs `Buffy.exe --game=<copy> --data <recompdata> --no-dialogs`: it needs the copy for as long as the game is played, and a
+start by RecompLauncher makes no shortcut (see "The shortcut"). It lists `<recompdata>\hdd\E` (the Xbox's user data partition: the saved
+games, under `UDATA\45410012`, and the game's own options in `TDATA`) and `achievements.txt` as the saves, leaving out `hdd\Z`, the game's cache
+partition, which holds about 115 MB of the disc's files. Its settings are keys of `settings.toml` that the Vulkan renderer (the default) acts on, and its
+`exit_codes` put the game's exit codes (2 to 10, in `app.h`) in words. It has no `game.dumps`: no checksum of the disc has been verified against Redump. The packaged
+file is checked: `tools/check_recomplauncher.py` checks it against RecompLauncher's JSON schema (RecompLauncher's developer guide
+holds it, and `RECOMPLAUNCHER_GUIDE` says where the guide is; the schema is not kept here) and against `settings_list.cpp`, `app.h` and
+`main.cpp` (the keys, the values the game reads, its defaults, the options it takes), and `package_windows.sh` runs it. It has not been tried in
+RecompLauncher itself yet.
+
 **The release folder.** `tools/package_windows.sh` assembles `out/Hellmouth-<version>-windows-x64/` and its zip from the cross builds
 (the commands are at the top of the script). It holds no file made from the game, and `tools/audit_windows_package.py`, which the
 script runs, fails if it does: the files must be exactly the allowed ones (listed with their sizes), and none may hold a piece of the
@@ -279,7 +294,7 @@ libraries' debug information; the script makes each a same length neutral path i
 it anywhere they can write to:
 
 ```
-Buffy.exe  README.txt  LICENSE  THIRD_PARTY.txt  licenses\
+Buffy.exe  README.txt  LICENSE  THIRD_PARTY.txt  recomplauncher.json  licenses\
 compiler\clang.exe lld-link.exe libLLVM-23.dll libclang-cpp.dll libc++.dll libunwind.dll   (LLVM 23, from llvm-mingw)
 compiler\xbe_recomp.exe buffy_config.exe sdk_names.txt                                       (this project's, built by tools/)
 compiler\Buffy.lib  include\cpu\  include\freestanding\  xdk\4432\layout.toml  LLVM-LICENSE.txt

@@ -61,6 +61,8 @@ What is in this folder
   Buffy.exe     the game's program and the runtime it runs on (no game code, no game data)
   compiler\     the programs that build the game from your disc at the first start: clang and lld (the LLVM project), and the
                 two recompiler tools of this project. They run only from Buffy.exe and need no installation.
+  recomplauncher.json
+                what RecompLauncher reads to set the game up and show its settings; nothing else uses it
   licenses\     the licences of what is included. THIRD_PARTY.txt lists it; LICENSE is this project's (MIT).
 
 The recompilation is the work of the Hellmouth project (https://github.com/djrobson5/Hellmouth-buffy-recomp) and the XboxXBERecomp SDK it is based on.

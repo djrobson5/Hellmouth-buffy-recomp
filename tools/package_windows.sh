@@ -6,7 +6,8 @@
 #   cmake --preset win-x64-mingw && cmake --build out/build/win-x64-mingw && cmake --build out/build/win-x64-mingw --target game_code_dll
 #   (cd tools && cmake --preset win-x64-mingw && cmake --build --preset win-x64-mingw)        # the first start's two tools
 #   tools/package_windows.sh [-v <version>]
-# env: LLVM_MINGW_WIN  the Windows-hosted llvm-mingw (default ~/Projects/toolchains/llvm-mingw-win-x86_64): clang, lld and their DLLs
+# env: RECOMPLAUNCHER_GUIDE  RecompLauncher's developer guide (recomplauncher-agent.md): its JSON schema checks recomplauncher.json (optional)
+#      LLVM_MINGW_WIN  the Windows-hosted llvm-mingw (default ~/Projects/toolchains/llvm-mingw-win-x86_64): clang, lld and their DLLs
 #      LLVM_MINGW_SRC  its sources, for the licence texts (default ~/Projects/toolchains/llvm-mingw-src)
 #      LLVM_MINGW      llvm-mingw for this machine (llvm-strings and the zip's checks); default ~/Projects/toolchains/llvm-mingw
 # The layout is the one the first start expects (sdk/runtime/app/game_build.h): <app>\Buffy.exe and <app>\compiler\... Nothing is
@@ -16,7 +17,7 @@ cd "$(dirname "$0")/.."
 REPO=$PWD
 VERSION=$(sed -n 's/.*\.version = "buffy-port \(.*\)",.*/\1/p' src/common/game_info.cpp)
 while getopts v: opt; do
-    case $opt in v) VERSION=$OPTARG ;; *) sed -n 2,13p "$0"; exit 2 ;; esac
+    case $opt in v) VERSION=$OPTARG ;; *) sed -n 2,14p "$0"; exit 2 ;; esac
 done
 [ -n "$VERSION" ] || { echo "no version: pass -v"; exit 2; }
 B=$REPO/out/build/win-x64-mingw
@@ -63,6 +64,18 @@ cp sdk/licenses/* "$P/licenses/"
 cp sdk/THIRD_PARTY.txt "$P/THIRD_PARTY.txt"
 cp LICENSE "$P/LICENSE"
 sed "s/@VERSION@/$VERSION/" tools/windows_player_readme.txt | sed 's/$/\r/' > "$P/README.txt"   # CRLF: it is opened in Notepad
+# RecompLauncher reads recomplauncher.json from the top of the release, beside Buffy.exe: how it sets the game up from the player's disc,
+# builds it (--prepare), starts it and shows its settings. The release's version goes in as the setup step's version, so that a player who
+# set the game up with an older release has it built again. It is checked before anything is zipped: against RecompLauncher's schema (in its
+# developer guide, not kept here: RECOMPLAUNCHER_GUIDE says where the guide is) and against this game's own settings and options.
+sed "s/@VERSION@/$VERSION/" tools/recomplauncher.json.in > "$P/recomplauncher.json"
+echo "== recomplauncher.json:"
+if [ -n "${RECOMPLAUNCHER_GUIDE:-}" ]; then
+    python3 -I tools/check_recomplauncher.py "$P/recomplauncher.json" --guide "$RECOMPLAUNCHER_GUIDE" --version "$VERSION" --self-test
+else
+    echo "  RECOMPLAUNCHER_GUIDE is not set: the schema is NOT checked, only the file against this game (set it to RecompLauncher's recomplauncher-agent.md)"
+    python3 -I tools/check_recomplauncher.py "$P/recomplauncher.json" --no-schema --version "$VERSION"
+fi
 
 # The toolchain here was built in a home folder, and its libraries carry the build's paths (/Users/<name>/Projects/..., in their
 # debug information and in the assertion messages of libc++abi). Each is made a same length neutral path, so that nothing else in
