@@ -193,3 +193,9 @@ What this port changed:
   `app/game_build.cpp` builds a dylib when `Recipe::target` is `Target::MachO` (tools without `.exe`, `ld64.lld`, `WriteAliasResponse`, `app/macho_export.h` for the
   stamp) and has `BuildFromSources`; `cmake/XbeAbi.cmake` is the ABI token and flags for both platforms (`cmake/xbe_abi.cmake` runs it as a script);
   `harness/build.sh` takes `NO_GEN=1`. `tools/check_game_code_dylib.sh` checks the result. The Windows token changes once with `x86_ops.h`.
+- The Mac first start for that build (`sdk/host/first_start.cpp`, `first_start_window.mm`, `app/posix_runner.h`, `host.h`; `sdk/host/main.cpp`):
+  `app::PrepareGameCode` and `PrepareOnly` as on Windows, over the same `game_build.cpp`; `--prepare` (windowless, before SDL), `--clean-work`, `--data` and
+  `RECOMPLAUNCHER_DATA` (`app::DataDir`: with one named the layout is Windows's, otherwise the Mac app's folder in an app and the exe's folder outside),
+  `--option=value`, `--print-paths`. `app::AppFolder` is where the compiler folder is (beside the exe; in an app `Contents/Resources`). The
+  achievement pictures and the icon are read from the data folder first (`ach::` icons, the Dock icon from `Buffy.png`). `sdk/host/game_code_dylib.sh`
+  also builds `xbe_recomp`, `buffy_config` and `sdk_names.txt` into `<out>/compiler`. `tools/mac/sim_first_start_mac.sh` plays it with no window.

@@ -13,9 +13,10 @@
 #
 # Windows: the exe and the game code DLL, the tools, check_game_code_dll.sh, check_config_tool.sh, package_windows.sh (with the
 # recomplauncher.json check and both audits), sim_first_start.sh.
-# Mac: the static build (build/app), the game-code-dylib build with llvm-mingw (build/app-dylib) and check_game_code_dylib.sh, and
-# with MAC_DEPS the same build against the source-built libraries (build/app-dylib-deps), check_game_code_dylib.sh, Buffy
-# --check-game-code (loads the game code without a window) and tools/mac/check_mac_deps.sh.
+# Mac: the static build (build/app), the game-code-dylib build with llvm-mingw (build/app-dylib), check_game_code_dylib.sh and
+# tools/mac/sim_first_start_mac.sh (the Mac first start, without a window, from the disc), and with MAC_DEPS the same build against the
+# source-built libraries (build/app-dylib-deps), check_game_code_dylib.sh, the first start again, Buffy --check-game-code (loads the game
+# code without a window) and tools/mac/check_mac_deps.sh.
 set -uo pipefail
 
 LOGS= WIN=1 MAC=1
@@ -96,11 +97,13 @@ if [ "$MAC" = 1 ]; then
     run "mac dylib build" "$LOGS/mac-dylib-build.log" 'env -u MAC_DEPS sdk/host/build.sh -r . -g generated/game -o build/app-dylib -n Buffy --game-code-dylib'
     echo "OK mac dylib build"
     counted "dylib" "$LOGS/check-dylib.log" 'bash tools/check_game_code_dylib.sh build/app-dylib'
+    counted "mac first start" "$LOGS/sim-mac.log" 'bash tools/mac/sim_first_start_mac.sh build/app-dylib'
     if [ -n "${MAC_DEPS:-}" ]; then
         export MAC_DEPS
         run "mac deps build" "$LOGS/mac-deps-build.log" 'sdk/host/build.sh -r . -g generated/game -o build/app-dylib-deps -n Buffy --game-code-dylib'
         echo "OK mac deps build"
         counted "dylib (deps)" "$LOGS/check-dylib-deps.log" 'bash tools/check_game_code_dylib.sh build/app-dylib-deps'
+        counted "mac first start (deps)" "$LOGS/sim-mac-deps.log" 'bash tools/mac/sim_first_start_mac.sh build/app-dylib-deps'
         run "check-game-code" "$LOGS/check-game-code.log" 'build/app-dylib-deps/Buffy --check-game-code'
         echo "OK $(grep -m1 '^overrides:' "$LOGS/check-game-code.log" || echo 'check-game-code')"
         rc=0
