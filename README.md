@@ -333,7 +333,12 @@ while RecompLauncher's Stop ends only the process it started, so a start by Reco
 the log, the settings or a window, it starts the same executable again with the same command line and `HELLMOUTH_SUPERVISED=1` in the environment, inside
 a job object that only it holds, and waits until the last process of the chain has gone, then exits with that process's exit code. Stop ends the supervisor, the job closes, and
 Windows ends every game process in it. It keeps `logs\supervisor.log` (its own, not `buffy.log`); if the job or the child cannot be made the game runs in
-the one process, as before. It lists `<recompdata>\hdd\E` (the Xbox's user data partition: the saved
+the one process, as before. The Mac build does the same with a keeper (`sdk/runtime/kernel/keeper.h`, run from the top of `main` in `sdk/host/main.cpp`; the same
+starts, and on a Mac also not `--check-game-code`, `--print-paths` or `--title-id`): it runs the game as its child and starts each next instance for it
+(`kernel::Relaunch` asks it over a pipe, so that every instance is the keeper's child as the first is, and not a child of the one before it, which
+is what macOS listed as an app of its own and kept in the Dock; that this works is for a play test to show), and when it is killed a pipe it holds closes and every game process ends within a moment; when the
+last one has gone it exits with that one's exit code, or 128 plus its signal. It never loads SDL or shows a window or a Dock icon, and keeps
+`logs/supervisor.log`. Outside RecompLauncher a Mac start is as it was (Launch Services opens each next instance). It lists `<recompdata>\hdd\E` (the Xbox's user data partition: the saved
 games, under `UDATA\45410012`, and the game's own options in `TDATA`) and `achievements.txt` as the saves, leaving out `hdd\Z`, the game's cache
 partition, which holds about 115 MB of the disc's files. Its settings are keys of `settings.toml` that the Vulkan renderer (the default) acts on, and its
 `exit_codes` put the game's exit codes (2 to 10, in `app.h`) in words. It has no `game.dumps`: no checksum of the disc has been verified against Redump. The packaged

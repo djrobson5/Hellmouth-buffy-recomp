@@ -18,12 +18,14 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <string>
 #include <thread>
 
 #include <poll.h>
 
 #include "app/app.h"
+#include "app/supervisor_args.h"
 #include "core/input.h"
 #include "core/keys.h"
 #include "core/log.h"
@@ -38,6 +40,7 @@
 #include "host.h"
 #include "image_symbols.h"
 #include "kernel/kernel.h"
+#include "kernel/keeper.h"
 
 namespace app {
 
@@ -868,8 +871,39 @@ int PrintPaths() {
 
 }  // namespace
 
+namespace {
+
+// A start by RecompLauncher (RECOMPLAUNCHER=1, not one of the one-shot modes: app/supervisor_args.h) is run as the keeper's child
+// (kernel/keeper.h), which is what RecompLauncher's Stop ends, however many processes the game has gone through by then: the code is the
+// game's, this process only waits. The game's own process finds the keeper's pipes in the environment instead (Attach), and nothing here
+// is done for it. A relaunched instance without a keeper, as one started by Launch Services is, has none either.
+// Before anything else is set up: no SDL (so no window or Dock icon), no log of the game's, no settings. nullopt: this process is the game.
+std::optional<int> Keep() {
+    using namespace app;
+    const bool marked = std::getenv(keeper::kEnv) != nullptr;
+    if (keeper::Attach()) return std::nullopt;
+    if (std::getenv("XBE_RELAUNCHED")) return std::nullopt;
+    const char* launcher = std::getenv("RECOMPLAUNCHER");
+    int argc = *_NSGetArgc();
+    char** argv = *_NSGetArgv();
+    if (!ShouldSuperviseArgv(WidenArgv(argc, argv), launcher && std::strcmp(launcher, "1") == 0, marked)) return std::nullopt;
+    char self[4096];
+    uint32_t size = sizeof self;
+    if (_NSGetExecutablePath(self, &size) != 0) return std::nullopt;
+    // its own few lines, where the game keeps its logs (the game owns <log>.log; this is supervisor.log, as on Windows)
+    std::error_code ec;
+    const std::filesystem::path folder = LogFolder();
+    std::filesystem::create_directories(folder, ec);
+    const std::string name = Instance() > 1 ? "supervisor-" + std::to_string(Instance()) + ".log" : "supervisor.log";
+    const std::string log = (folder / name).string();
+    return keeper::Run(self, argv, *_NSGetEnviron(), log.c_str());
+}
+
+}  // namespace
+
 int main() {
     using namespace app;
+    if (const std::optional<int> kept = Keep()) return *kept;
     if (Args().version) {
         std::printf("%s\n", kGame.version);
         return kExitOk;

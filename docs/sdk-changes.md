@@ -52,6 +52,11 @@ What this port changed:
     process at each level load, and a launcher's Stop kills only the process it started. `HELLMOUTH_SUPERVISED` marks the child; `--prepare`,
     `--relaunched`, `--version` and `--describe-settings` are never supervised. The decision is in `supervisor_args.h` (no Windows code), checked on a
     Mac by `tools/supervisor_args_check.cpp` from `tools/sim_first_start.sh`.
+  - `sdk/runtime/kernel/keeper.{h,cpp}`, `sdk/host/main.cpp`, `kernel/boot.cpp` (`kernel::Relaunch`), `supervisor_args.h` (a Mac): the same for a Mac,
+    as a keeper that runs the game as its child, starts each next instance for it over a pipe (so every instance is the keeper's child, as
+    Launch Services' and a process's own start of the next were not good enough for), and ends every game process when it is killed (a pipe
+    only it holds the write end of). `HELLMOUTH_SUPERVISED` holds the three pipes' descriptors; one-shot modes also include `--check-game-code`,
+    `--print-paths` and `--title-id`. Checked without a game or a window by `tools/mac/keeper_check.{cpp,sh}`.
   - `sdk/runtime/app/game_choice.cpp`, `game_files.cpp`: `ChooseGame` (Windows) picks the game as the Mac app does: `--game`, else
     the image remembered in `<data>\disc_image.txt` (kept only once accepted), else `assets`, else `IFileOpenDialog`. `FindGame` is
     split, so `FindGameFrom` can try a place without ending the run; with `XBE_GAME_CODE_DLL` another release is refused.

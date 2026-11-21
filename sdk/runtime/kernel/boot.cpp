@@ -26,6 +26,7 @@
 #include <sys/stat.h>
 #include <spawn.h>
 #include <string>
+#include "kernel/keeper.h"
 #endif
 #endif
 #include "xbe/xbe.h"
@@ -231,7 +232,9 @@ void Relaunch(const char* exe) {
     // As on Windows, this window stays up until the next instance has shown its first frames, so the window doesn't close
     // and open again. XBE_HANDOVER_FIFO names a pipe it writes to then. From inside an app the next instance is opened
     // as an app of its own (app::HandoverOpen); a bare executable starts it as a process. The arguments (--game,
-    // --instance) go along, and none of this process's open files.
+    // --instance) go along, and none of this process's open files. Under RecompLauncher (kernel/keeper.h) the keeper
+    // starts it instead, with these arguments and environment, so that it is the keeper's child as this one is, and
+    // the keeper's Stop ends it too: neither of the two ways above would be that.
     xnet::CloseSockets();
     app::HandoverStarting();
     char temp[1024] = {};
@@ -244,8 +247,10 @@ void Relaunch(const char* exe) {
         keep = open(fifo.c_str(), O_WRONLY | O_NONBLOCK | O_CLOEXEC);  // so that reading waits, before the next one opens it
         setenv("XBE_HANDOVER_FIFO", fifo.c_str(), 1);
     }
-    int next = app::HandoverOpen(path);
-    if (next < 0) {
+    const bool kept = keeper::Active();
+    int next = kept ? keeper::Spawn(path.c_str(), *_NSGetArgv(), *_NSGetEnviron()) : app::HandoverOpen(path);
+    if (kept && next < 0) LOGE("relaunch: the keeper cannot start %s: %s", path.c_str(), std::strerror(errno));
+    if (next < 0 && !kept) {
         posix_spawnattr_t attr;
         posix_spawnattr_init(&attr);
         posix_spawnattr_setflags(&attr, POSIX_SPAWN_CLOEXEC_DEFAULT);
@@ -286,6 +291,7 @@ void Relaunch(const char* exe) {
     }
     if (ready >= 0) close(ready), close(keep), unlink(fifo.c_str());
     unsetenv("XBE_HANDOVER_FIFO");
+    keeper::KeepAcrossExec();  // the new program of this process is still the keeper's
     execv(path.c_str(), *_NSGetArgv());
 #else
     execl(path.c_str(), path.c_str(), nullptr);

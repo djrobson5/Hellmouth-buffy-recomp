@@ -10,7 +10,8 @@
 //
 // It runs at the very top of wWinMain and loads nothing: no log, settings, window or game code. Only a normal play start under
 // RecompLauncher is supervised (supervisor_args.h); if anything fails before the child exists, the game runs in this process as it
-// would without a supervisor. It never shows a message box. Windows only, and not run on a Mac.
+// would without a supervisor. It never shows a message box. Windows only: a Mac's counterpart is the keeper (kernel/keeper.h), which
+// the decision of supervisor_args.h also serves.
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
