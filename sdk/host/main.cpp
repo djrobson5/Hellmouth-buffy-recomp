@@ -155,6 +155,7 @@ std::filesystem::path AppData() {
 
 CommandLine g_args;
 bool g_print_title_id = false;  // --title-id, which only bundle.sh asks for
+bool g_print_paths = false;     // --print-paths: where everything is and goes, one "name: path" a line, and exit (nothing is made)
 #ifdef XBE_GAME_CODE_DLL
 std::filesystem::path g_game_code;  // --game-code <dylib>: the recompiled game code, instead of <data>/build/<library>
 bool g_check_game_code = false;     // --check-game-code: load it, say what it holds, and exit (no window, no game files)
@@ -182,11 +183,14 @@ void CloseLogOnCrash() {
     for (int sig : {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT}) std::signal(sig, OnCrash);
 }
 
-// A build outside an app has nothing for macOS to take an icon from, and the Dock would show a bare executable's. SDL's
-// window icon is the app's on this platform. bundle.sh gives the app its own.
-void SetDevelopmentIcon(SDL_Window* window) {
+// The Dock's icon is SDL's window icon on this platform. The first start makes <data>/Buffy.png from the player's disc, and it is used
+// in an app too (the app's own icon, from bundle.sh, is what the Dock shows until the window is up). A build outside an app has nothing
+// for macOS to take an icon from, and the Dock would show a bare executable's: icon.png beside it, when there is one.
+void SetAppIcon(SDL_Window* window) {
     gpu::pack::Image image;
-    if (InApp() || !gpu::pack::ReadPng(ExeDir() / "icon.png", image)) return;
+    bool read = gpu::pack::ReadPng(DataDir() / "Buffy.png", image);
+    if (!read && !InApp()) read = gpu::pack::ReadPng(ExeDir() / "icon.png", image);
+    if (!read) return;
     if (SDL_Surface* surface = SDL_CreateSurfaceFrom(int(image.width), int(image.height), SDL_PIXELFORMAT_RGBA32,
                                                      image.levels[0].data(), int(image.width) * 4)) {
         SDL_SetWindowIcon(window, surface);
@@ -196,7 +200,7 @@ void SetDevelopmentIcon(SDL_Window* window) {
 
 }  // namespace
 
-// the same options as on Windows (app.h); an argument without dashes is the game
+// the same options as on Windows (app.h), "--game <path>" or "--game=<path>"; an argument without dashes is the game
 const CommandLine& Args() {
     static const bool parsed = [] {
         CommandLine& c = g_args;
@@ -204,7 +208,18 @@ const CommandLine& Args() {
         char** v = *_NSGetArgv();
         for (int i = 1; i < n; i++) {
             std::string a = v[i];
-            auto next = [&]() -> std::filesystem::path { return i + 1 < n ? std::filesystem::path(v[++i]) : std::filesystem::path(); };
+            bool has_value = false;
+            std::string inline_value;
+            if (a.rfind("--", 0) == 0)
+                if (size_t eq = a.find('='); eq != std::string::npos) {
+                    inline_value = a.substr(eq + 1);
+                    a.resize(eq);
+                    has_value = true;
+                }
+            auto next = [&]() -> std::filesystem::path {
+                if (has_value) return std::filesystem::path(inline_value);
+                return i + 1 < n ? std::filesystem::path(v[++i]) : std::filesystem::path();
+            };
             if (a == "--game") c.game = next();
             else if (a == "--config") c.config = next();
             else if (a == "--textures") c.textures = next();
@@ -212,19 +227,34 @@ const CommandLine& Args() {
             else if (a == "--saves") c.saves = next();
             else if (a == "--shader-cache") c.shader_cache = next();
             else if (a == "--screenshots") c.screenshots = next();
+            else if (a == "--data") c.data = next();
             else if (a == "--instance") c.instance = std::max(0, std::min(8, std::atoi(next().c_str())));
             else if (a == "--no-dialogs") c.no_dialogs = true;
             else if (a == "--any-release") c.any_release = true;
             else if (a == "--version") c.version = true;
             else if (a == "--title-id") g_print_title_id = true;
+            else if (a == "--print-paths") g_print_paths = true;
             else if (a == "--describe-settings") c.describe = true;
+            else if (a == "--prepare") c.prepare = true;
+            else if (a == "--relaunched") c.relaunched = true;
+            else if (a == "--clean-work") c.clean_work = true;
 #ifdef XBE_GAME_CODE_DLL
             else if (a == "--game-code") g_game_code = next();
             else if (a == "--check-game-code") g_check_game_code = true;
 #endif
             else if (a.rfind("--", 0) != 0 && a.rfind("-psn_", 0) != 0) c.game = a;
         }
-        if (InApp()) {
+        // the data folder, when the player or a launcher names one: --data, else RECOMPLAUNCHER_DATA. Then the layout is Windows's: every
+        // path not named by an option of its own is under it (DataDir)
+        if (c.data.empty())
+            if (const char* env = std::getenv("RECOMPLAUNCHER_DATA"); env && *env) c.data = env;
+        // a setup run for a launcher asks nobody anything
+        if (c.prepare) c.no_dialogs = true;
+        // a level restart is the environment's on this platform (kernel::Relaunch), the option is Windows's
+        if (std::getenv("XBE_RELAUNCHED")) c.relaunched = true;
+        // In an app with no data folder named, the app's own (~/Library/Application Support/Buffy), as the Mac app always had: its
+        // settings, hard disk, logs. The files of that layout are not Windows's (logs/<log>.log, achievements.txt among the logs).
+        if (InApp() && c.data.empty()) {
             const std::filesystem::path data = AppData();
             auto fill = [](std::filesystem::path& p, const std::filesystem::path& value) {
                 if (p.empty()) p = value;
@@ -237,7 +267,7 @@ const CommandLine& Args() {
             fill(c.screenshots, data / "Screenshots");
         }
         std::error_code ec;
-        for (auto* p : {&c.game, &c.config, &c.textures, &c.log, &c.saves, &c.shader_cache, &c.screenshots})
+        for (auto* p : {&c.game, &c.config, &c.textures, &c.log, &c.saves, &c.shader_cache, &c.screenshots, &c.data})
             if (!p->empty()) *p = std::filesystem::absolute(*p, ec);
 #ifdef XBE_GAME_CODE_DLL
         if (!g_game_code.empty()) g_game_code = std::filesystem::absolute(g_game_code, ec);
@@ -249,25 +279,38 @@ const CommandLine& Args() {
 }
 
 int Instance() { return Args().instance; }
-std::filesystem::path DataDir() { return ExeDir(); }  // the Mac host writes beside the executable (--saves, --log and the rest name other places)
-std::filesystem::path TextureDir() { return Args().textures.empty() ? ExeDir() / "textures" : Args().textures; }
-std::filesystem::path LogFolder() { return Args().log.empty() ? ExeDir() / "logs" : Args().log.parent_path(); }
+
+// Where the game writes what no option names: --data, else RECOMPLAUNCHER_DATA (the layout is then Windows's: settings.toml, hdd/E, logs/,
+// achievements.txt, build/Buffy.dylib, cache/ ... directly under it); else, in an app, ~/Library/Application Support/Buffy (the layout the
+// Mac app has always had, where Args() has set each option); else the folder of the executable.
+std::filesystem::path DataDir() {
+    static const std::filesystem::path dir = !Args().data.empty() ? Args().data : InApp() ? AppData() : ExeDir();
+    return dir;
+}
+// What ships with the program and is only read: the compiler folder of the first start and the pictures an app carries. Beside the
+// executable, or in an app, Contents/Resources (so that Contents/MacOS holds the one executable): sdk/host/bundle.sh puts compiler/ there.
+std::filesystem::path AppFolder() {
+    static const std::filesystem::path dir = InApp() ? ExeDir().parent_path() / "Resources" : ExeDir();
+    return dir;
+}
+std::filesystem::path TextureDir() { return Args().textures.empty() ? DataDir() / "textures" : Args().textures; }
+std::filesystem::path LogFolder() { return Args().log.empty() ? DataDir() / "logs" : Args().log.parent_path(); }
 std::filesystem::path SavesDir() {
-    std::filesystem::path base = Args().saves.empty() ? ExeDir() / "hdd" : Args().saves;
+    std::filesystem::path base = Args().saves.empty() ? DataDir() / "hdd" : Args().saves;
     if (Instance() > 1) base += std::to_string(Instance());
     return base;
 }
-std::filesystem::path ScreenshotDir() { return Args().screenshots.empty() ? ExeDir() / "Screenshots" : Args().screenshots; }
-std::filesystem::path ShaderCacheDir() { return Args().shader_cache.empty() ? ExeDir() / "shadercache" : Args().shader_cache; }
+std::filesystem::path ScreenshotDir() { return Args().screenshots.empty() ? DataDir() / "Screenshots" : Args().screenshots; }
+std::filesystem::path ShaderCacheDir() { return Args().shader_cache.empty() ? DataDir() / "shadercache" : Args().shader_cache; }
 
 #ifdef XBE_GAME_CODE_DLL
 // The recompiled game code, a dylib built for this executable (the Mac first start builds it from the player's disc, sdk/host/build.sh
 // --game-code-dylib from the generated sources): --game-code, else <data>/build/<IMAGE_LIBRARY's name>.dylib, where the build leaves it
-// (inside an app that is the app's data folder, outside one the executable's own, as for the rest). It binds to this executable's
+// (DataDir: the data folder named, the app's, or the executable's own). It binds to this executable's
 // own names when it is loaded, so it is loaded before the first call into the code. Fail is the caller's: the reason is the return.
 static std::filesystem::path GameCodePath() {
     if (!g_game_code.empty()) return g_game_code;
-    return (InApp() ? AppData() : DataDir()) / "build" / gamecode::Recipe(1).library;
+    return DataDir() / "build" / gamecode::Recipe(1).library;
 }
 
 // false with what to tell the player when the dylib will not do; code is the exit code Fail would use
@@ -640,10 +683,10 @@ void Event(const SDL_Event& e, bool& redraw) {
     }
 }
 
-// The app's disc image: only a path that FindGame has accepted is kept, so a wrong choice is asked about again next time
-// instead of failing at every start. The file is also how a level restart finds it, as the arguments it carries over are
-// the ones the app started with.
-std::filesystem::path KeptGameFile() { return app::AppData() / "disc_image.txt"; }
+// The disc image the player chose (in an app, or with a data folder named): only a path that FindGame has accepted is kept, so a
+// wrong choice is asked about again next time instead of failing at every start. The file is also how a level restart finds it, as
+// the arguments it carries over are the ones the app started with. <data>/disc_image.txt, as on Windows.
+std::filesystem::path KeptGameFile() { return app::DataDir() / "disc_image.txt"; }
 
 std::filesystem::path TakeKeptGame() {
     std::string path;
@@ -689,6 +732,67 @@ std::filesystem::path PickGame() {
     return pick.path;
 }
 
+// The game for a start: --game; else, in an app or with a data folder named, the disc image kept from the last start, else the player is
+// asked with a file panel; else (a bare executable on its own) it is not there. Where nobody can be asked (--no-dialogs, --prepare, a level
+// restart) a game that is not found ends the run (kExitNoGame). False when the player cancels the panel; a game that FindGame refuses
+// ends the run there (kExitNoGame, kExitWrongRelease).
+bool ChooseDisc(app::GameFiles& game) {
+    using namespace app;
+    const bool ask = !Args().no_dialogs && !Args().prepare && !Args().relaunched;
+    const bool keep_game = Args().game.empty() && (InApp() || !Args().data.empty());
+    if (keep_game) {
+        g_args.game = TakeKeptGame();
+        if (g_args.game.empty() && ask) g_args.game = PickGame();
+        if (g_args.game.empty() && ask) {
+            LOGR("Exit: no disc image chosen");
+            logx::Flush();
+            return false;
+        }
+    }
+    if (Args().game.empty()) Fail(kExitNoGame, kGame.missing);
+    if (!FindGame(game)) Fail(kExitNoGame, kGame.missing);  // (FindGame has ended the run for every reason it has)
+    if (keep_game) KeepGame(Args().game);
+    return true;
+}
+
+// the log's name: one a session, a level restart carries on its predecessor's
+std::string LogName() {
+    std::string log = app::kGame.log;
+    if (app::Instance() > 1) log += "-" + std::to_string(app::Instance());
+    if (!app::Args().log.empty()) log = app::Args().log.stem().string();
+    return log;
+}
+
+// --print-paths: where the program is, reads and writes, one "name: path" a line; nothing is made and nothing started (a launcher's
+// developer reads it, and tools/mac/sim_first_start_mac.sh checks the two layouts against it)
+int PrintPaths() {
+    using namespace app;
+    auto line = [](const char* name, const std::filesystem::path& path) { std::printf("%s: %s\n", name, path.string().c_str()); };
+    line("executable folder", ExeDir());
+    line("app folder", AppFolder());
+    line("data", DataDir());
+    line("settings", SettingsFile());
+    line("hard disk", SavesDir());
+    line("logs", LogFolder());
+    line("log", LogFolder() / (LogName() + (logx::kVerbose ? "_NNN.log" : ".log")));  // a debug build numbers its logs (logx::Init)
+    line("achievements", ach::SavedFile());
+    line("textures", TextureDir());
+    line("screenshots", ScreenshotDir());
+    line("shader cache", ShaderCacheDir());
+    line("disc image", KeptGameFile());
+#ifdef XBE_GAME_CODE_DLL
+    const gamebuild::Layout layout{AppFolder(), DataDir(), LogFolder()};
+    line("compiler", layout.Compiler());
+    line("game code", GameCodePath());
+    line("build work", layout.Work());
+    line("build log", layout.Log());
+    line("pictures", DataDir() / "achievements");
+    line("icon", DataDir() / "Buffy.png");
+    line("pictures marker", layout.PicturesMarker());
+#endif
+    return kExitOk;
+}
+
 }  // namespace
 
 int main() {
@@ -711,15 +815,13 @@ int main() {
         std::printf("%s", cfg::Describe(list, kGame.presets, LauncherFields).c_str());
         return kExitOk;
     }
+    if (g_print_paths) return PrintPaths();
+    // the data folder (--data, RECOMPLAUNCHER_DATA, the app's, else the executable's) holds what the game writes: made if it is not there
     std::error_code data_error;
-    if (InApp()) std::filesystem::create_directories(AppData(), data_error);
-    // one log a session: a restart into the level carries on its predecessor's
-    bool relaunched = std::getenv("XBE_RELAUNCHED") != nullptr;
-    std::string log = kGame.log;
-    if (Instance() > 1) log += "-" + std::to_string(Instance());
-    if (!Args().log.empty()) log = Args().log.stem().string();
-    logx::Init(LogFolder().string(), log, relaunched);
+    std::filesystem::create_directories(DataDir(), data_error);
+    logx::Init(LogFolder().string(), LogName(), Args().relaunched);
     CloseLogOnCrash();
+    if (data_error) LOGE("data folder %s could not be made: %s", DataDir().string().c_str(), data_error.message().c_str());
 
     SDL_SetHint(SDL_HINT_APP_NAME, "Buffy the Vampire Slayer");
     // Full screen is a window over the whole screen, not a Space of its own: macOS's animation into a Space would play at
@@ -738,20 +840,8 @@ int main() {
     else g_high_frame_rate = Get().high_frame_rate;
     ach::Start();
     if (kGame.init) kGame.init();
-    const bool keep_game = InApp() && Args().game.empty();
-    if (keep_game) {
-        g_args.game = TakeKeptGame();
-        if (g_args.game.empty()) g_args.game = PickGame();
-        if (g_args.game.empty()) {
-            LOGR("Exit: no disc image chosen");
-            logx::Flush();
-            return kExitOk;
-        }
-    }
-    if (Args().game.empty()) Fail(kExitNoGame, kGame.missing);
     GameFiles game;
-    if (!FindGame(game)) return kExitNoGame;
-    if (keep_game) KeepGame(Args().game);
+    if (!ChooseDisc(game)) return kExitOk;
 #ifdef XBE_GAME_CODE_DLL
     {
         std::wstring problem;
@@ -766,7 +856,7 @@ int main() {
     g_window = SDL_CreateWindow(title.c_str(), int(out.width), int(out.height),
                                 SDL_WINDOW_RESIZABLE | SDL_WINDOW_METAL | SDL_WINDOW_HIGH_PIXEL_DENSITY);
     if (!g_window) Fail(kExitNoD3D12, L"The window couldn't be opened: " + std::filesystem::path(SDL_GetError()).wstring());
-    SetDevelopmentIcon(g_window);
+    SetAppIcon(g_window);
     const char* full_screen = std::getenv(kFullScreenEnv);
     if (full_screen) LOGR("window: full screen %s, as before the restart", full_screen[0] == '1' ? "on" : "off");
     ApplyNow(full_screen ? full_screen[0] == '1' : -1);

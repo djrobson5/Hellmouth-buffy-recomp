@@ -175,6 +175,8 @@ void Load() {
 
 }  // namespace
 
+std::filesystem::path SavedFile() { return File(); }
+
 void Start() {
     std::lock_guard lock(g_lock);
     Load();

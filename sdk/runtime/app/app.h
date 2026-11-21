@@ -28,6 +28,7 @@ bool Has(const char* id);
 uint64_t Count(const char* name);             // a running total the game keeps (saved with the achievements)
 uint64_t Add(const char* name, uint64_t n);   // adds and returns the new total
 void Flush();                                 // write what's not written yet (at exit and before a level restart)
+std::filesystem::path SavedFile();            // achievements.txt: where what is earned is kept
 void DrawNotes(float scale);                  // the renderer's ImGui frame: "Achievement earned" in the corner
 void DrawList();                              // the in-game menu's page
 // Virtues (opt-in, the launcher's Journey page): ATHELAS_VIRTUES=<dealt>,<taken>, percents the launcher works out
@@ -137,12 +138,12 @@ std::string LauncherFields(const cfg::Desc& d);
 //   --saves <folder>: the console's hard disk (save games, the game's cache)   --shader-cache <folder>
 //   --screenshots <folder>: where \ saves a PNG of the picture
 //   --data <folder> (or RECOMPLAUNCHER_DATA in the environment): one folder for everything the game writes, in place of the
-//   one beside the exe: the settings, the hard disk, logs, screenshots, the shader cache, the remembered disc image and,
-//   on Windows, the game's code the first start builds. Each of the options above still names its own place.
+//   one beside the exe (on a Mac, in an app, ~/Library/Application Support/Buffy): the settings, the hard disk, logs, screenshots,
+//   the shader cache, the remembered disc image and the game's code the first start builds. Each of the options above still names its own place.
 //   With all of them given nothing is written beside the exe, which may then be read-only.
 //   --no-dialogs: failures end the run with their exit code and a line in the log, without a message box
 //   --version, --describe-settings: one line, or the settings as JSON, on stdout; then exit 0
-//   --prepare (Windows): build the game's code (see PrepareGameCode) with no window and no questions, print "progress <0 to 1>
+//   --prepare (Windows, and a Mac build with the game's code in a dylib): build the game's code (see PrepareGameCode) with no window and no questions, print "progress <0 to 1>
 //   <what it is doing>" lines on stdout, and exit 0 when it is built; any other code, with the reason on stderr, when not.
 //   The game is not started.
 struct CommandLine {
@@ -203,6 +204,11 @@ extern std::atomic<bool> g_high_frame_rate;
 extern float g_max_frame_aspect;
 
 std::filesystem::path ExeDir();
+#ifndef _WIN32
+// What ships with the program and is only read (the compiler folder of the first start, the achievement pictures an app carries): beside
+// the executable, or in an app (Buffy.app/Contents/MacOS/<exe>) its Contents/Resources. DataDir is where the game writes.
+std::filesystem::path AppFolder();
+#endif
 // the game in assets (game_files.cpp): its folder and this executable's xbe, from the extracted files or a disc
 // image (.iso), which it mounts as D:; false after telling the player what is missing
 struct GameFiles {
