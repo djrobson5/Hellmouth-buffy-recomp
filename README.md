@@ -238,6 +238,11 @@ committed. The game sets it with the CMake variable `XBE_ICON` (root `CMakeLists
 `.rc` beside the manifest as resource 1 of the icon type (before this the executable had none: `LoadIconW(MAKEINTRESOURCEW(1))` found
 nothing). `llvm-readobj --coff-resources out/build/win-x64-mingw/Buffy.exe` lists it: ICON entries 1 to 4 (256, 48, 32, 16) and GROUP_ICON 1.
 
+`logs\compile.log` times each phase, in the style of the tool runs' "exit: ... after N ms": `time: disc read`, `config`, `translate`, `pictures`, `plan`
+(what is already built), `compile` (all the files together, with how many were compiled and at how many at once), `link` and `check and
+install`, each with its milliseconds, and `time: total` as the last line, also for a build that failed or was stopped (the phases it got to
+are there). A start that only makes the pictures adds its own `time: pictures` line.
+
 Then the window offers Start (or A on a controller) and Exit, and to delete the work folder (about 300 MB; keeping it makes a later
 rebuild much quicker). Every program runs without a window, below normal priority, in a job object that ends them with the game; their
 output and a line for every command and its exit code go to `logs\compile.log`. A failure shows the step, what happened and what to

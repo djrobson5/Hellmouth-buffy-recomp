@@ -128,8 +128,10 @@ inline bool EnsurePictures(const Layout& layout, const Recipe& recipe, const Rea
 
 // Runs the build. Objects whose source, flags and compiler are what they were are reused, so a closed window or a failure
 // loses only the files in progress (the sources are made again each time and compared by content: the recompiler writes every
-// file). Writes <Build>\<library> and <Build>\<library>.stamp when it succeeds, and a line of each step and command to the log. The pictures
-// are made after the translation if they are not there (`pictures` may be empty: none are made).
+// file). Writes <Build>\<library> and <Build>\<library>.stamp when it succeeds, and a line of each step and command to the log, with the
+// time each phase took ("time: translate 5300 ms": disc read, config, translate, pictures, plan, compile (all the files, with how many were
+// compiled), link, check and install) and "time: total" at the end, whatever the outcome. The pictures are made after the translation if
+// they are not there (`pictures` may be empty: none are made).
 Outcome Build(const Layout& layout, const Recipe& recipe, const ReadInputs& read, const ReadPictures& pictures, Runner& run, Progress& progress,
               Failure& failure);
 

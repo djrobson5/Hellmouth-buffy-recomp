@@ -91,6 +91,11 @@ file "$DATA/Buffy.png" | grep -q "PNG image data, 256 x 256"; chk $? "Buffy.png 
 mkdir -p "$REPO/out/hellmouth-icon-check"; cp "$DATA/Buffy.png" "$DATA/Buffy.ico" "$REPO/out/hellmouth-icon-check/"
 [ ! -d "$DATA/cache/pictures" ]; chk $? "the scratch folder of the two disc files is gone"
 grep -q '^pictures: made$' "$DATA/logs/compile.log"; chk $? "compile.log says the pictures were made"
+grep '^time: ' "$DATA/logs/compile.log"
+timed=1
+for phase in "disc read" config translate pictures plan compile link "check and install" total; do [ "$(grep -c "^time: $phase [0-9]* ms" "$DATA/logs/compile.log")" = 1 ] || { echo "not one time for: $phase"; timed=0; }; done
+[ $timed = 1 ]; chk $? "compile.log has a time for each phase (disc read, config, translate, pictures, plan, compile, link, check and install), once, and the total"
+grep -q '^time: compile [0-9]* ms (129 files compiled, ' "$DATA/logs/compile.log"; chk $? "the compile's time is for all 129 files, and says so"
 if [ -f "$B/game_code/Buffy.dll" ]; then
     # the PE time stamp (four bytes at e_lfanew + 8) is the only difference expected
     pe=$(od -An -tu4 -j60 -N4 "$DLL" | tr -d ' ')
@@ -117,6 +122,7 @@ rm -rf "$DATA/build" "$W"
 [ $code = 3 ]; chk $? "it stopped (exit code $code: $(cat "$D/stop.err"))"
 keys=$(ls "$W" | grep -c '\.obj\.key$'); echo "$keys objects kept"
 [ "$keys" -ge 30 ] && [ -z "$(find "$W" -name '*.tmp')" ]; chk $? "the finished objects are kept and no half written one is left"
+tail -2 "$DATA/logs/compile.log" | grep -q '^time: total [0-9]* ms$'; chk $? "a stopped build still ends its log with the total time ($(tail -3 "$DATA/logs/compile.log" | tr '\n' ' '))"
 [ ! -f "$DLL" ]; chk $? "and there is no DLL"
 "$FSC" --app "$APP" --data "$DATA" --game "$DISC" --slots "$SLOTS" > "$D/carry.out" 2>&1; chk $? "carried on"
 grep "compile:" "$DATA/logs/compile.log" | head -1
@@ -149,6 +155,7 @@ printf '#!/bin/sh\necho "x86_recomp.cpp:1:1: error: simulated compiler failure" 
 head -4 "$D/f1.err"
 [ $code = 9 ] && grep -q "^error: Compiling x86_.*\.cpp: clang.exe failed (exit code 1)" "$D/f1.err" && grep -q "simulated compiler failure" "$D/f1.err"
 chk $? "a failing compiler: exit 9, the step and file named, the compiler's own message in the log tail"
+grep -q '^time: compile [0-9]* ms' "$D/appfail/logs/compile.log" && grep -q '^time: total [0-9]* ms' "$D/appfail/logs/compile.log"; chk $? "and the log still has the time of the phase that failed and the total"
 rm "$D/appfail/compiler/buffy_config.exe"
 "$FSC" --app "$D/appfail" --data "$D/appfail" --game "$DISC" > "$D/f2.out" 2> "$D/f2.err"; code=$?
 head -2 "$D/f2.err"
@@ -198,7 +205,7 @@ rm -rf "$DATA2/achievements" "$DATA2/Buffy.ico" "$DATA2/Buffy.png" "$DATA2/pictu
 grep -q '^pictures: made$' "$D/p1.out" && [ $code = 0 ]; chk $? "with no pictures at all it makes them, with exit 0 ($(grep '^pictures' "$D/p1.out"))"
 cmp -s "$DATA2/build/Buffy.dll" "$D/before.dll"; chk $? "and the DLL is not built again (the same bytes)"
 [ "$(grep -c '^run: .*clang' "$DATA2/logs/compile.log")" = "$compiles_before" ] && grep -q '^built: ' "$DATA2/logs/compile.log"; chk $? "no compile or link ran, and the earlier build's lines are still in compile.log (it is added to, not started again)"
-[ "$(wc -l < "$DATA2/logs/compile.log")" -gt "$lines_before" ] && tail -8 "$DATA2/logs/compile.log" | grep -q '^pictures: made$'; chk $? "the log has the pictures' own lines at its end"
+[ "$(wc -l < "$DATA2/logs/compile.log")" -gt "$lines_before" ] && tail -8 "$DATA2/logs/compile.log" | grep -q '^time: pictures [0-9]* ms$'; chk $? "the log has the pictures' own lines and time at its end"
 python3 "$REPO/tools/compare_pngs.py" "$DATA2/achievements" "$D/py-icons" > /dev/null && [ "$(cat "$DATA2/pictures.stamp")" = "pictures 1" ]; chk $? "the same 28 pictures and the marker are back"
 rm -rf "$DATA2/achievements"
 "$FSC" --app "$APP" --data "$DATA2" --game "$DISC" > "$D/p2.out" 2>&1; grep -q '^pictures: made$' "$D/p2.out"; chk $? "a missing achievements folder alone is made again (the marker is not enough)"
@@ -219,6 +226,7 @@ rm -rf "$DATA2/achievements" "$DATA2/Buffy.ico" "$DATA2/Buffy.png" "$DATA2/pictu
 rm "$DATA2/build/Buffy.dll"
 "$FSC" --app "$APP" --data "$DATA2" --game "$D/extracted" --slots "$SLOTS" > "$D/q2.out" 2> "$D/q2.err"; code=$?
 [ $code = 0 ] && [ -f "$DATA2/build/Buffy.dll" ] && grep -q '^built: ' "$DATA2/logs/compile.log" && grep -q '^pictures: not made: ' "$DATA2/logs/compile.log" && [ ! -s "$D/q2.err" ]; chk $? "the same in a build: the DLL is built, exit 0, no error, the log says the pictures were not made"
+grep -q '^time: pictures ' "$DATA2/logs/compile.log" && grep -q '^time: total ' "$DATA2/logs/compile.log"; chk $? "and its phases are timed all the same"
 # b: the disc image again
 "$FSC" --app "$APP" --data "$DATA2" --game "$DISC" > "$D/q3.out" 2>&1; grep -q '^pictures: made$' "$D/q3.out"; chk $? "the disc image again: the pictures are made after all"
 # c: the tool fails or is not there: on a copy of the app folder

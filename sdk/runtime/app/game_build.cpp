@@ -157,6 +157,8 @@ std::string HintFor(const Layout& layout, bool did_not_start, uint32_t code, boo
     return hint;
 }
 
+std::string Ms(int64_t ms) { return std::to_string(ms) + " ms"; }
+
 // a command as the log shows it
 std::string Command(const fs::path& program, const std::vector<Str>& args) {
     std::string line = U8(program);
@@ -243,6 +245,15 @@ public:
     Outcome Run(const ReadInputs& read, const ReadPictures& pictures);
 
 private:
+    Outcome RunSteps(const ReadInputs& read, const ReadPictures& pictures);
+    // a step, and a line in the log for the time it took ("time: translate 5300 ms"); the detail follows the time
+    template <class Step>
+    bool Timed(const char* phase, Step&& step, const std::string& detail = {}) {
+        const int64_t began = NowMs();
+        const bool ok = step();
+        run_.Note(std::string("time: ") + phase + " " + Ms(NowMs() - began) + detail);
+        return ok;
+    }
 
     void SetStage(gamebuild::Stage stage) {
         progress_.stage = stage;
@@ -554,18 +565,28 @@ bool Builder::Install() {
 }
 
 Outcome Builder::Run(const ReadInputs& read, const ReadPictures& pictures) {
+    const int64_t began = NowMs();
+    Outcome outcome = RunSteps(read, pictures);
+    run_.Note("time: total " + Ms(NowMs() - began));  // whatever the outcome: a failed or stopped build says how far it got
+    return outcome;
+}
+
+Outcome Builder::RunSteps(const ReadInputs& read, const ReadPictures& pictures) {
     auto done = [&](bool ok) {
         if (ok) return Outcome::Built;
         return progress_.cancel ? Outcome::Cancelled : Outcome::Failed;
     };
-    if (!Prepare(read)) return done(false);
-    if (!Config()) return done(false);
-    if (!Translate()) return done(false);
-    if (!Pictures(pictures)) return done(false);
-    if (!Plan()) return done(false);
-    if (!Compile()) return done(false);
-    if (!Link()) return done(false);
-    if (!Install()) return done(false);
+    if (!Timed("disc read", [&] { return Prepare(read); })) return done(false);
+    if (!Timed("config", [&] { return Config(); })) return done(false);
+    if (!Timed("translate", [&] { return Translate(); })) return done(false);
+    if (!Timed("pictures", [&] { return Pictures(pictures); })) return done(false);
+    if (!Timed("plan", [&] { return Plan(); })) return done(false);
+    // all the files, with how many were compiled (the rest were kept from an earlier start) and at how many at once
+    const bool compiled = Timed("compile", [&] { return Compile(); },
+                                " (" + std::to_string(jobs_.size()) + " files compiled, " + std::to_string(std::max<size_t>(recipe_.slots, 1)) + " at a time)");
+    if (!compiled) return done(false);
+    if (!Timed("link", [&] { return Link(); })) return done(false);
+    if (!Timed("check and install", [&] { return Install(); })) return done(false);
     SetStage(Stage::Done);
     return Outcome::Built;
 }
@@ -587,7 +608,10 @@ bool PicturesCurrent(const Layout& layout, const Recipe& recipe) {
 
 bool MakePictures(const Layout& layout, const Recipe& recipe, const ReadPictures& read, Runner& run) {
     const std::atomic<bool> never{false};
-    return MakePicturesImpl(layout, recipe, read, run, never);
+    const int64_t began = NowMs();
+    const bool made = MakePicturesImpl(layout, recipe, read, run, never);
+    run.Note("time: pictures " + Ms(NowMs() - began));  // in a build the phase is timed there
+    return made;
 }
 
 std::string Blocker(const Layout& layout, const Recipe& recipe) {
