@@ -283,7 +283,13 @@ game up from the player's copy (an `.iso`, or a folder with `Default.xbe`), to s
 up runs `Buffy.exe --prepare --game=<copy> --data <recompdata>` (see "For a launcher"), done when `<recompdata>\build\Buffy.dll` is there;
 its `version` is the release's, so a player who set the game up with an older release has it built again, which is quick when the DLL is
 current. Play runs `Buffy.exe --game=<copy> --data <recompdata> --no-dialogs`: it needs the copy for as long as the game is played, and a
-start by RecompLauncher makes no shortcut (see "The shortcut"). It lists `<recompdata>\hdd\E` (the Xbox's user data partition: the saved
+start by RecompLauncher makes no shortcut (see "The shortcut"). The game starts a new process at each level load and the old one exits,
+while RecompLauncher's Stop ends only the process it started, so a start by RecompLauncher (`RECOMPLAUNCHER=1`, and not `--prepare`, `--relaunched`,
+`--version` or `--describe-settings`) first runs `Buffy.exe` as a supervisor (`sdk/runtime/app/supervisor.cpp`): the first thing `wWinMain` does, before
+the log, the settings or a window, it starts the same executable again with the same command line and `HELLMOUTH_SUPERVISED=1` in the environment, inside
+a job object that only it holds, and waits until the last process of the chain has gone, then exits with that process's exit code. Stop ends the supervisor, the job closes, and
+Windows ends every game process in it. It keeps `logs\supervisor.log` (its own, not `buffy.log`); if the job or the child cannot be made the game runs in
+the one process, as before. It lists `<recompdata>\hdd\E` (the Xbox's user data partition: the saved
 games, under `UDATA\45410012`, and the game's own options in `TDATA`) and `achievements.txt` as the saves, leaving out `hdd\Z`, the game's cache
 partition, which holds about 115 MB of the disc's files. Its settings are keys of `settings.toml` that the Vulkan renderer (the default) acts on, and its
 `exit_codes` put the game's exit codes (2 to 10, in `app.h`) in words. It has no `game.dumps`: no checksum of the disc has been verified against Redump. The packaged

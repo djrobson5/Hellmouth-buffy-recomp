@@ -241,6 +241,14 @@ void SetWindowIcons(void* window);
 // Windows: "<title>.lnk" beside the executable, made or brought up to date (target, folder, icon, a given --data); best effort, never fatal (shortcut.cpp).
 // None for a restart for a level, a start with --no-dialogs, or one RecompLauncher made (RECOMPLAUNCHER=1 in the environment).
 void UpdateShortcut();
+#ifdef _WIN32
+// Windows, the very first thing wWinMain does (supervisor.cpp). A normal play start by RecompLauncher (RECOMPLAUNCHER=1; not --prepare,
+// --relaunched, --version or --describe-settings) runs the game as a child of this same executable inside a job object only this process
+// holds, waits until the last process of the chain has gone (the game starts a new process at each level load), and ends with that one's
+// exit code, so that RecompLauncher's Stop, which ends only the process it started, ends the whole game. Returns, and the game runs in
+// this process, for any other start and when the job or the child cannot be made.
+void Supervise();
+#endif
 void* MetalLayer();  // not Windows: the window's CAMetalLayer, null when the window has none (the renderer draws into it)
 extern std::atomic<uint32_t> g_pixel_height;  // not Windows: the window's height in the screen's own pixels, for the render scale
 // boot splash: GameInfo::splash .bmp or .png beside the exe, up before the game window

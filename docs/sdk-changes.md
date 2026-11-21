@@ -46,6 +46,12 @@ What this port changed:
     a game writes; the explicit options still win and the default layout is the one it was. The Mac host and the harness define it as
     the exe's folder. Options take `--name=value` as well as `--name value`; `--prepare`, `--relaunched` and `--clean-work` are
     new. `PrintOut`/`PrintErr` write to a launcher's pipe or the parent's console from a GUI program.
+  - `sdk/runtime/app/supervisor.cpp`, `supervisor_args.h`, `main.cpp`, `app.h` (`app::Supervise`, Windows): a start by RecompLauncher
+    (`RECOMPLAUNCHER=1`, a normal play start) runs the game as a child of the same executable inside a job object (kill on close, a completion
+    port) that only the first process holds, and ends with the code of the last process of the chain: `kernel::Relaunch` starts a new
+    process at each level load, and a launcher's Stop kills only the process it started. `HELLMOUTH_SUPERVISED` marks the child; `--prepare`,
+    `--relaunched`, `--version` and `--describe-settings` are never supervised. The decision is in `supervisor_args.h` (no Windows code), checked on a
+    Mac by `tools/supervisor_args_check.cpp` from `tools/sim_first_start.sh`.
   - `sdk/runtime/app/game_choice.cpp`, `game_files.cpp`: `ChooseGame` (Windows) picks the game as the Mac app does: `--game`, else
     the image remembered in `<data>\disc_image.txt` (kept only once accepted), else `assets`, else `IFileOpenDialog`. `FindGame` is
     split, so `FindGameFrom` can try a place without ending the run; with `XBE_GAME_CODE_DLL` another release is refused.

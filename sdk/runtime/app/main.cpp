@@ -452,6 +452,8 @@ void PrintErr(const std::string& line) { Print(STD_ERROR_HANDLE, L"CONOUT$", lin
 }  // namespace app
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
+    // under RecompLauncher the game runs as this process's child (and does not return here), before anything else is set up
+    app::Supervise();
 #ifdef XBE_PGO_GEN
     PgoStart();
 #endif

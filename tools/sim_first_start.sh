@@ -14,6 +14,7 @@
 #   with the compiler folder read only; the game from a folder of extracted files; the achievement pictures and the icon the first
 #   start makes in the data folder (the pictures decode to the pixels tools/make_achievement_icons.py makes), made on their own marker
 #   when the DLL is current, made again by a newer recipe, and never what stops a start (a disc without the files, a tool that fails).
+#   Also the supervisor's decision (tools/supervisor_args_check.cpp over sdk/runtime/app/supervisor_args.h): which command lines are run under one.
 #   tools/sim_first_start.sh              (needs out/Hellmouth-<version>-windows-x64.zip: tools/package_windows.sh)
 #   needs: build/tools/{xbe_recomp,buffy_config,sdk_names.txt} (tools/regen.sh and tools/check_config_tool.sh build them), the disc
 #   image in "Buffy the Vampire Slayer (USA)/" (DISC=<image> to name another), out/build/win-x64-mingw (the exe's flags and
@@ -53,6 +54,10 @@ clang++ -std=c++20 -O1 -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-decla
     "$REPO/tools/first_start_check.cpp" "$REPO/sdk/runtime/app/game_build.cpp" "$REPO/sdk/runtime/kernel/disc.cpp" "$REPO/sdk/runtime/kernel/crypto.cpp" \
     -o "$REPO/build/fsc/first_start_check" || die "first_start_check does not compile"
 FSC="$REPO/build/fsc/first_start_check"
+# the supervisor's decision (a RecompLauncher play start is run under one; --prepare, --relaunched, --version and the like are not)
+clang++ -std=c++20 -O1 -Wall -Wextra -I"$REPO/sdk/runtime" "$REPO/tools/supervisor_args_check.cpp" -o "$REPO/build/fsc/supervisor_args_check" || die "supervisor_args_check does not compile"
+"$REPO/build/fsc/supervisor_args_check" > "$D/sac.out" 2>&1; chk $? "which starts run under a supervisor: $(tail -1 "$D/sac.out"), the one-shot modes and the game's own process not among them"
+grep '^WRONG' "$D/sac.out" || true
 # the stamp the first start expects (built from the headers the exe was built from) is the one in the exe's bytes
 exe_stamp=$("$TC/llvm-strings" "$APP/Buffy.exe" | grep '^xbe-game-code ' | sort -u)
 recipe_stamp=$("$FSC" --print-stamp)
