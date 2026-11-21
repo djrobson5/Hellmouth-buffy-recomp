@@ -5,6 +5,7 @@
 #include <cmath>
 #include <iterator>
 #include <mutex>
+#include <utility>
 
 #include <SDL3/SDL.h>
 
@@ -98,6 +99,7 @@ void UpdatePads() {
 }  // namespace
 
 void Init() {
+    if (g_sdl) return;  // started already, for the first start's window
     // XInput takes the Xbox pads (with it on, SDL's WGI leaves them to it, so none is listed twice): WGI alone missed
     // an Xbox 360 wireless controller (#18). WGI takes the other pads, reading the triggers apart, and HIDAPI
     // PlayStation and Switch pads. Reads come from the guest's threads, so SDL's own thread takes the device notices.
@@ -209,6 +211,20 @@ Pad Poll(int port) {
     if (app::kGame.pad) app::kGame.pad(port, p);
     keys::Merge(port, p);
     return p;
+}
+
+uint16_t HeldOnAnyController() {
+    constexpr std::pair<SDL_GamepadButton, uint16_t> kFaceButtons[] = {{SDL_GAMEPAD_BUTTON_SOUTH, 0x1000},
+                                                                       {SDL_GAMEPAD_BUTTON_EAST, 0x2000},
+                                                                       {SDL_GAMEPAD_BUTTON_WEST, 0x4000},
+                                                                       {SDL_GAMEPAD_BUTTON_NORTH, 0x8000}};
+    std::lock_guard lock(g_lock);
+    UpdatePads();
+    uint16_t held = 0;
+    for (SDL_Gamepad* pad : g_pads)
+        for (auto [button, mask] : kFaceButtons)
+            if (pad && SDL_GetGamepadButton(pad, button)) held |= mask;
+    return held;
 }
 
 // the motors run until set again

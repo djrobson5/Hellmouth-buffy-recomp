@@ -27,8 +27,19 @@ What this port changed:
     `tools/library_calls.cpp` uses in a synthetic compile and link that `tools/check_game_code_dll.sh` runs, with no game data.
   - `sdk/runtime/cpu/freestanding/`: stand-ins for `<cstdint>`, `<cstring>`, `<cmath>`, `<limits>` and `<type_traits>`, for the
     compile without a C++ library.
-  - `sdk/runtime/app/game_code.cpp`, `app.h`, `main.cpp`: `PrepareGameCode` loads `IMAGE_LIBRARY` from beside the executable and ends
-    the run with `kExitNoGameCode` when it is missing. Compiling it on the first start is not here yet. `Sha1` is public.
+  - `sdk/runtime/app/game_code.cpp`, `game_build.cpp`/`.h`, `game_code_recipe.h`, `pe_export.h`, `app.h`, `main.cpp`: the first start
+    builds the DLL on the player's PC from their own disc (adapted from the same upstream commit's `game_code.cpp`, which started
+    clang and lld and showed a progress window; here the steps are split from the Windows). `game_build.cpp` is the build: the disc's
+    `Default.xbe` and `final.map`, `buffy_config`, `xbe_recomp`, a compile of each file (biggest first, as many at once as there is
+    memory and cores for, each into a `.tmp` and then its name, kept with a hash of source, flags and compiler and reused by content
+    because the recompiler rewrites every file), `lld-link`, the stamp read from the new DLL, the move into `<data>\build`, progress
+    by bytes of source, and the failures with their step, hint and the log. It uses no Windows or runtime calls and starts programs
+    through a `Runner`, so `tools/first_start_check.cpp` runs it on a Mac over the release's folders with a POSIX one. `pe_export.h`
+    reads an exported string from a PE file's bytes (the stamp, without loading anything). `game_code.cpp` is the Windows side: the
+    runner (`CreateProcessW`, no window, below normal priority, a kill-on-close job, one `compile.log`), the GDI progress window
+    (Start / Exit, a delete box for the work folder, controller support through `input::HeldOnAnyController`), the build lock and
+    the failure box. `PrepareGameCode` loads `<data>\build\<IMAGE_LIBRARY>` when its stamp is current and builds it when not (a
+    relaunched or `--no-dialogs` run never builds: it ends with `kExitNoGameCode` or `kExitStaleGameCode`). `Sha1` is public.
   - `sdk/runtime/app/main.cpp`, `app.h`, `settings.cpp`, `achievements.cpp`, `gpu/d3d12.cpp`, `system_info.cpp`; `sdk/host/main.cpp` and
     `sdk/harness/app_headless.cpp`: `app::DataDir` (`--data`, `RECOMPLAUNCHER_DATA`, else the folder of the exe) is where the settings
     file, hard disk, logs, screenshots, shader cache, texture packs, crash dumps and `achievements.txt` go, so one folder holds all that
@@ -40,6 +51,8 @@ What this port changed:
     split, so `FindGameFrom` can try a place without ending the run; with `XBE_GAME_CODE_DLL` another release is refused.
   - `sdk/runtime/app/settings.cpp`, `settings_list.cpp`: `[graphics] renderer` defaults to Vulkan on Windows too (Direct3D 12 stays
     selectable and is used when Vulkan cannot start); the Windows help says what Vulkan lacks.
+  - `sdk/runtime/core/input.cpp`: `HeldOnAnyController` (the face buttons, as XInput's masks) for the first start's window, and `Init`
+    can be called twice.
   - `sdk/tools/recomp`: `[xbe] library`, which only a DLL build needs, makes the recompiler write `exports.def` (what the DLL exports: its tables and one
     `__imp__sub_XXXXXXXX` name for each function) and `imports.def` (the same, with `sub_XXXXXXXX` aliases, for the executable's
     import library). `IMAGE_LIBRARY` and `IMAGE_SECTIONS_HASH` are in `image_symbols.h`, so the executable has them without the DLL: the

@@ -16,7 +16,8 @@ constexpr const char* kSources[] = {"A", "B", "X", "Y", "LB", "RB", "LT", "RT", 
 constexpr const char* kSourceNames[] = {"A", "B", "X", "Y", "LB", "RB", "LT", "RT", "Left stick click", "Right stick click", "Nothing"};
 constexpr uint32_t kSourceCount = 11;
 
-void Init();  // window thread, before boot
+void Init();  // window thread, before boot; the first start's window (Windows, app/game_code.cpp) starts it earlier
+uint16_t HeldOnAnyController();  // the face buttons held on any controller, as XInput's A, B, X and Y masks (0x1000, 0x2000, 0x4000, 0x8000)
 // a controller plugged in or out: a host whose window thread takes SDL's events tells of them here (not Windows)
 void PadEvent(bool added, uint32_t id);
 // the controller on that port, then GameInfo::pad

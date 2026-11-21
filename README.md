@@ -40,8 +40,9 @@ Not proven yet:
 - **Extras:** Level Select and the Hard arenas have been driven through their menus in the headless harness (see "Extras"), not played
   by hand, and the achievement rule for Level Select games has been seen working only on the records of a save.
 - **Other Macs:** it has been tested on one machine, an M5 Pro with 64 GB of memory on macOS 27.0.1.
-- **Windows:** the SDK underneath also targets Windows, and this port's code now compiles and links for it (see "Cross-building for
-  Windows"), but that program has never been run.
+- **Windows:** the SDK underneath also targets Windows, and this port's code now compiles and links for it, and a release for it can
+  be assembled (see "Cross-building for Windows" and "The Windows release"), but that program, its first start and the programs
+  that run there have never been run: nothing in the build environment can run a Windows program.
 
 Levels are very dark near the camera, with hard-edged shadows. That's the game's own lighting, and it matches footage of the
 game. The game's Brightness slider (Options, Display) lifts it.
@@ -96,11 +97,11 @@ and the restart looks for that name beside the running executable. The window cl
 
 ### Cross-building for Windows
 
-A compile check, not a release: it builds the Windows program on a Mac with [llvm-mingw](https://github.com/mstorsjo/llvm-mingw),
-using the `generated/game` that `tools/regen.sh` made, and the result has never been run. The program is in two parts. `Buffy.exe`
-holds the runtime and this port's own code and none of the game's recompiled code. `Buffy.dll` holds the recompiled game: the plan is
-for the executable to compile it on the player's PC at the first start, from their own copy of the game. That step isn't written
-yet, so for now the DLL is built here, with the commands the player's PC will run, and neither file may be shared.
+It builds the Windows program on a Mac with [llvm-mingw](https://github.com/mstorsjo/llvm-mingw), using the `generated/game` that
+`tools/regen.sh` made, and the result has never been run. The program is in two parts. `Buffy.exe` holds the runtime and this port's
+own code and none of the game's recompiled code. `Buffy.dll` holds the recompiled game, and the executable compiles it on the player's
+PC at the first start, from their own copy of the game (see "The Windows release"). The `game_code_dll` target builds the same DLL
+here, with the commands the player's PC will run, as a check; neither it nor anything that holds the game's code may be shared.
 
 ```sh
 export LLVM_MINGW=<folder of llvm-mingw>
@@ -167,7 +168,8 @@ How the two parts meet, in the order a call takes:
     `symbols=` an FNV-1a of `image_symbols.h`: the names and addresses the executable's replacements bind to, which come from the
     config. The recompiler writes both into `x86_func_mapping.cpp` for the DLL and into `image_symbols.h` for the executable.
 
-  The first start will compare the stamp the same way to decide whether the DLL it finds is current.
+  The first start compares the stamp the same way (`gamebuild::CheckDll`, which reads the export from the DLL's bytes, so that
+  nothing is loaded or run) to decide whether the DLL it finds is current.
 - A C++ exception thrown in the executable unwinds through the DLL's frames: the DLL catches with `catch (...)` and asks the
   executable (`x86_try_resume`) whether it was a resume for that frame, as it can't name the executable's exception type.
 
@@ -191,6 +193,26 @@ ships with the exe and is only read (the splash, subtitles, achievement pictures
 **Renderer.** Vulkan is the default on Windows (`[graphics] renderer = 1`), as it is on the Mac: the renderer this port's features were
 built on. Direct3D 12 stays selectable, and is used when Vulkan cannot start. Vulkan lacks the anti-aliasing choices, HDR and the
 upscalers that Direct3D 12 has.
+
+**The first start.** The game's code is made on the player's PC from their own disc, so a release carries none of it. When
+`<data>\build\Buffy.dll` is missing, or its stamp is not the one the executable expects (an update of the program, or another copy
+of the game), a window shows the build, which `sdk/runtime/app/game_build.cpp` does and `game_code.cpp` runs:
+
+1. the disc's `Default.xbe` and `final.map`, read with the runtime's own disc reader, are written into `<data>\cache\game-code\`;
+2. `compiler\buffy_config.exe` writes `game.toml` from them, and `xbe_recomp.exe` the C++ (about 225 MB), `exports.def` and
+   `imports.def`; the image the sources say must be the one the executable was made for;
+3. `clang.exe` compiles each of the 129 files, the biggest first, as many at once as the PC has cores and free memory for (a compile
+   needs about 250 MB), each into `<name>.obj.tmp` and then `<name>.obj`; an object is kept with a hash of its source, the compile flags
+   (the ABI token is one) and the compiler, and reused when those are what they were (the recompiler writes every file again each
+   time, so they are compared by content), so a closed window or a failure loses only the files in progress;
+4. `lld-link.exe` links them against `compiler\Buffy.lib` into `<data>\build\new\Buffy.dll`, whose stamp is read and must be the
+   executable's, and which is then moved to `<data>\build\Buffy.dll`.
+
+Then the window offers Start (or A on a controller) and Exit, and to delete the work folder (about 300 MB; keeping it makes a later
+rebuild much quicker). Every program runs without a window, below normal priority, in a job object that ends them with the game; their
+output and a line for every command and its exit code go to `logs\compile.log`. A failure shows the step, what happened and what to
+try (antivirus, a long path) and the last lines of the log. A process started with `--relaunched` (the game restarts itself to load a
+level) or `--no-dialogs` never builds, and ends the run (exit 7 or 8) when the DLL is not there or is stale.
 
 ## Achievements
 
