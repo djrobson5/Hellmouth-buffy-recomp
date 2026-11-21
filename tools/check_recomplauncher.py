@@ -2,7 +2,7 @@
 """Checks recomplauncher.json, the file RecompLauncher sets the game up from, against RecompLauncher's own JSON schema and against this game.
 
     check_recomplauncher.py <recomplauncher.json> (--guide <recomplauncher-agent.md> | --schema <schema.json> | --no-schema)
-                            [--version <x.y.z>] [--repo <this repo>] [--self-test]
+                            [--version <x.y.z>] [--repo <this repo>] [--self-test] [--describe <settings.json>]
 
 The schema is not kept in this repository: it is part of RecompLauncher's developer guide (GPL-3), also published at
 https://recomplauncher.com/schema/recomplauncher.json. Give it as the guide (its "# The JSON schema" section, the first fenced json
@@ -20,6 +20,12 @@ What it checks:
      form: true, an integer, a quoted choice in the list), stays in the key's range, and its defaults are the game's own (sdk/runtime/app/app.h,
      settings.cpp). The Windows default display mode is known here, as the Mac's differs.
   --self-test also runs a few files the schema must refuse (an unknown top-level key, ...) and fails if one is accepted.
+
+The Mac's file (tools/recomplauncher-mac.json.in: its "system" has macos) is checked the same way, with the Mac's differences: the program is
+Buffy.app/Contents/MacOS/Buffy and takes what sdk/host/main.cpp takes, the game's code is <name>.dylib, and the settings are checked against
+--describe <settings.json>, what the Mac program's own --describe-settings prints (tools/package_mac.sh puts it in the app as
+Contents/Resources/settings.json): every key a setting writes must be one the program lists, with its type, range, choices and default.
+A key it does not list (the Windows renderer, which the Mac program has no choice of, among them) is refused.
 """
 import argparse
 import json
@@ -210,8 +216,37 @@ def split_key(key):
     return section, name
 
 
+def describe_list(path):
+    """section/key -> {type, member, choices, limits, default}, as settings_list gives them, from what a program's --describe-settings printed.
+    A float's limits are in hundredths and a default is written as the game writes it, as the checks of the Windows list expect."""
+    if not path:
+        raise SystemExit("the Mac's file is checked against the program's settings: give --describe <the --describe-settings output>")
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    kinds = {"bool": "Bool", "int": "Int", "float": "Float", "choice": "Choice", "string": "String"}
+    found = {}
+    for s in data["settings"]:
+        kind = kinds[s["type"]]
+        lo, hi, default = s.get("min"), s.get("max"), s["default"]
+        if kind == "Bool":
+            default = "true" if default else "false"
+        elif kind == "Float":
+            default = "%.2f" % default
+        elif kind == "Choice":
+            default = '"%s"' % default
+        elif kind == "Int":
+            default = str(default)
+        limits = None
+        if lo is not None and hi is not None:
+            limits = (int(round(lo * 100)), int(round(hi * 100))) if kind == "Float" else (lo, hi)
+        found["%s/%s" % (s["section"], s["key"])] = {"type": kind, "member": None, "limits": limits, "default": default,
+                                                     "choices": s.get("choices") if kind == "Choice" else None}
+    return found
+
+
 def game_checks(m, args, problems, notes):
     repo = os.path.abspath(args.repo)
+    mac = "macos" in m.get("system", {})
     # 2. placeholders and paths
     def walk(node, path):
         if isinstance(node, dict):
@@ -240,12 +275,20 @@ def game_checks(m, args, problems, notes):
     exe = (start.get("program") or [""])[0]
     if prepare and prepare.get("program") != start.get("program"):
         problems.append("start and prepare run different programs")
-    main_cpp = read(repo, "sdk", "runtime", "app", "main.cpp")
+    if mac:
+        # the program's own path, which every RecompLauncher finds (a plain Buffy.app needs Beta 55 or newer)
+        found = re.fullmatch(r"(\w+)\.app/Contents/MacOS/(\w+)", exe)
+        if not found or found.group(1) != found.group(2):
+            problems.append("the program %r is not <name>.app/Contents/MacOS/<name>" % exe)
+        main_cpp, main_name, quote = read(repo, "sdk", "host", "main.cpp"), "sdk/host/main.cpp", 'a == "%s"'
+    else:
+        main_cpp, main_name, quote = read(repo, "sdk", "runtime", "app", "main.cpp"), "sdk/runtime/app/main.cpp", 'L"%s"'
+    program = os.path.basename(exe)
     for step, a in (("start", start.get("args", [])), ("prepare", prepare.get("args", []))):
         for arg in a:
             option = arg.split("=")[0]
-            if option.startswith("--") and 'L"%s"' % option not in main_cpp:
-                problems.append("%s: Buffy.exe takes no %s (sdk/runtime/app/main.cpp)" % (step, option))
+            if option.startswith("--") and quote % option not in main_cpp:
+                problems.append("%s: %s takes no %s (%s)" % (step, program, option, main_name))
         if "--game={game}" not in a:
             problems.append("%s: --game={game} is not one argument" % step)
         if "--data" not in a or a[a.index("--data") + 1:a.index("--data") + 2] != ["{data}"]:
@@ -254,7 +297,7 @@ def game_checks(m, args, problems, notes):
         problems.append("start: --no-dialogs is missing (a launcher's start has nobody to ask)")
     if "--prepare" not in prepare.get("args", []):
         problems.append("prepare: --prepare is missing")
-    want_done = "{data}/build/%s.dll" % os.path.splitext(exe)[0]
+    want_done = "{data}/build/%s.%s" % (os.path.splitext(program)[0], "dylib" if mac else "dll")
     if prepare and want_done not in prepare.get("done", []):
         problems.append("prepare.done does not hold %s, the file the build makes" % want_done)
     version = args.version
@@ -273,8 +316,11 @@ def game_checks(m, args, problems, notes):
         elif (code == "0") != (text == "ok"):
             problems.append("exit_codes: only 0 is 'ok'")
     # 5. the settings
-    known = settings_list(repo)
-    defaults, modes = setting_defaults(repo)
+    if mac:
+        known, defaults, modes = describe_list(args.describe), {}, []
+    else:
+        known = settings_list(repo)
+        defaults, modes = setting_defaults(repo)
     seen = set()
     for s in m.get("settings", []):
         sid = s["id"]
@@ -287,8 +333,10 @@ def game_checks(m, args, problems, notes):
         entries += list(s.get("defaults", {}).items())
         for key, value in s.get("defaults", {}).items():
             d = known.get(key)
-            real = real_default(d, key, defaults, modes) if d else None
-            if real is not None and norm(real) != norm(value):
+            real = (d["default"] if mac else real_default(d, key, defaults, modes)) if d else None
+            if mac and d is None:
+                pass
+            elif real is not None and norm(real) != norm(value):
                 problems.append("%s: default of %s is %s, the game's is %s" % (sid, key, value, real))
             elif d and real is None:
                 problems.append("%s: the game's default of %s could not be read from app.h (this check needs updating)" % (sid, key))
@@ -297,7 +345,7 @@ def game_checks(m, args, problems, notes):
         for key in sorted(keys):
             d = known.get(key)
             if not d:
-                problems.append("%s: %s is not a setting of the game (settings_list.cpp)" % (sid, key))
+                problems.append("%s: %s is not a setting of the game (%s)" % (sid, key, "not in the Mac program's --describe-settings" if mac else "settings_list.cpp"))
                 continue
             if "/" not in key or not re.fullmatch(r"\w+/\w+", key):
                 problems.append("%s: %s is not Section/Key" % (sid, key))
@@ -328,7 +376,10 @@ def game_checks(m, args, problems, notes):
                 problems.append("%s: choice %s writes nothing" % (sid, c["label"]))
         if s.get("choices") and not s.get("defaults"):
             problems.append("%s: no defaults" % sid)
-    notes.append("%d settings checked against sdk/runtime/app/settings_list.cpp and app.h (%d keys known)" % (len(m.get("settings", [])), len(known)))
+    if mac:
+        notes.append("%d settings checked against the Mac program's --describe-settings (%d keys listed)" % (len(m.get("settings", [])), len(known)))
+    else:
+        notes.append("%d settings checked against sdk/runtime/app/settings_list.cpp and app.h (%d keys known)" % (len(m.get("settings", [])), len(known)))
     notes.append("start: %s %s" % (exe, " ".join(start.get("args", []))))
     if prepare:
         notes.append("prepare: %s %s, done %s, version %s" % (exe, " ".join(prepare.get("args", [])), prepare.get("done"), prepare.get("version")))
@@ -409,7 +460,7 @@ def self_test(schema, manifest):
     c["settings"][0]["choices"] = c["settings"][0]["choices"][:1]
     cases.append(("a setting with one choice", c))
     c = json.loads(json.dumps(manifest))
-    c["system"]["windows"]["graphics"] = {"glide": "1"}
+    c["system"][next(iter(c["system"]))]["graphics"] = {"glide": "1"}
     cases.append(("an unknown graphics api", c))
     ok = True
     for name, case in cases:
@@ -429,6 +480,7 @@ def main():
     ap.add_argument("--version")
     ap.add_argument("--repo", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
     ap.add_argument("--self-test", action="store_true")
+    ap.add_argument("--describe", help="the Mac program's --describe-settings output (for the Mac's file)")
     args = ap.parse_args()
 
     try:
