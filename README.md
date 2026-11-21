@@ -220,6 +220,29 @@ built and its stamp checks, and otherwise 9 with one line on stderr (`error: <st
 the game is not started and the settings are not read. `--clean-work` deletes the work folder afterwards. The lines go to the
 launcher's pipe, or to the console the program was started from.
 
+**The release folder.** `tools/package_windows.sh` assembles `out/Hellmouth-<version>-windows-x64/` and its zip from the cross builds
+(the commands are at the top of the script). It holds no file made from the game, and `tools/audit_windows_package.py`, which the
+script runs, fails if it does: the files must be exactly the allowed ones (listed with their sizes), and none may hold a piece of the
+code of the DLL the build made, of the game's `Default.xbe` or of the generated C++, nor a header other than the one the ABI token was
+computed from, nor the name of the machine or user that built it (the toolchain used here carries the paths it was built in, in its
+libraries' debug information; the script makes each a same length neutral path in the copies, and says how many). A player unzips
+it anywhere they can write to:
+
+```
+Buffy.exe  README.txt  LICENSE  THIRD_PARTY.txt  licenses\
+compiler\clang.exe lld-link.exe libLLVM-23.dll libclang-cpp.dll libc++.dll libunwind.dll   (LLVM 23, from llvm-mingw)
+compiler\xbe_recomp.exe buffy_config.exe sdk_names.txt                                       (this project's, built by tools/)
+compiler\Buffy.lib  include\cpu\  include\freestanding\  xdk\4432\layout.toml  LLVM-LICENSE.txt
+```
+
+**Checks** (all on the Mac): `tools/sim_first_start.sh` unpacks the zip into a folder with a space and an accent, puts this Mac's
+`clang`, `lld`, `xbe_recomp` and `buffy_config` in it under the names the zip gives them, and runs the first start's own build code
+(`game_build.cpp`, with a POSIX runner in `tools/first_start_check.cpp` in place of the Windows one) over it, reading the disc image
+through `kernel::Disc`: a first build, a current DLL, a deleted DLL, a build stopped and carried on, an update (a new ABI token), a
+damaged DLL, the failures a player would meet, a data folder of its own with the compiler folder read only, and the game from a folder.
+What cannot be checked there, and has not been run: the Windows programs themselves, `CreateProcess` and the job object, the
+window, the file dialog, the console output of `--prepare`, loading the DLL, and the game.
+
 ## Achievements
 
 The original game has no achievements, so Hellmouth adds 28: one for each boss, plus kills (three of them with particular weapons), secrets, finishing the game on
@@ -347,7 +370,7 @@ other settings, including pad scripts.
 | `sdk/xdk/4432/layout.toml` | This XDK's data layouts, each value with the instruction that proves it |
 | `src/` | The game's side of the port: the achievement list, the hooks, widescreen, the Extras additions |
 | `install.sh` | The installer: the steps under "Building it by hand", with checks |
-| `tools/` | `regen.sh`; `make_config.py` writes the recompiler's input, and `buffy_config/` (C++) does the same for the Windows first start, checked against it by `check_config_tool.sh`; `disasm.py` disassembles by name; `coverage.py` reports what the game calls in the libraries; `check_game_code_dll.sh` (with `library_calls.cpp`) and `sim_first_start.sh` check the Windows build (see "Cross-building for Windows") |
+| `tools/` | `regen.sh`; `make_config.py` writes the recompiler's input, and `buffy_config/` (C++) does the same for the Windows first start, checked against it by `check_config_tool.sh`; `disasm.py` disassembles by name; `coverage.py` reports what the game calls in the libraries; `check_game_code_dll.sh` (with `library_calls.cpp`) and `sim_first_start.sh` (with `first_start_check.cpp`) check the Windows build, and `package_windows.sh` (with `audit_windows_package.py` and `windows_player_readme.txt`) assembles and audits its release (see "Cross-building for Windows" and "The Windows release") |
 | `docs/xdk-4432.md` | How this game differs from what the SDK expected, and the evidence |
 | `assets/`, `config/game.toml`, `generated/`, `build/` | Not in the repository: the game's files, what's derived from them, and build output |
 

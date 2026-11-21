@@ -70,6 +70,8 @@ What this port changed:
   - `sdk/cmake/XbeRecomp.cmake`: `XBE_GAME_CODE_DLL` leaves the generated sources out of the executable, gives it the import library, the
     delay loading and the module definition file, and adds the `game_code_dll` target, which builds the DLL with the first start's
     commands for checking. The flags are in one place, written to `game_code_flags.h` for the executable.
+- `tools/package_windows.sh`, `audit_windows_package.py`, `windows_player_readme.txt`, `sdk/THIRD_PARTY.txt`: the Windows release and its audit,
+  and the notices of the compiler and runtime it carries. `tools/sim_first_start.sh` and `first_start_check.cpp` play the first start on a Mac.
 - `sdk/runtime/gpu/state.h`: render state numbers for XDK 4432.
 - `sdk/runtime/kernel/memory.cpp`: macOS shared memory for the physical window, and commits on 16 KB host pages.
 - `sdk/runtime/kernel/threads.cpp`: macOS thread names. Binding to a core does nothing, as macOS has no way to do it.

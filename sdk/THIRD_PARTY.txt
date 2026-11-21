@@ -118,3 +118,15 @@ third_party/streamline/LICENSE.txt. sl_security.h: its <softpub.h> include is wr
 The Streamline and DLSS DLLs (sl.interposer.dll, sl.common.dll, sl.dlss.dll, nvngx_dlss.dll) are not in this
 repository; the release ships them under NVIDIA's own terms (licenses\NVIDIA-DLSS-LICENSE.txt,
 licenses\NVIDIA-Streamline-LICENSE.txt).
+
+
+Programs and libraries of the Windows release's first start (the compiler folder, and the C and C++ runtime of the executables)
+
+LLVM 23 (https://github.com/llvm/llvm-project): clang and lld (compiler\clang.exe, compiler\lld-link.exe, which is lld run under
+the name that makes it link as lld-link does) with libLLVM-23.dll and libclang-cpp.dll, and the C++ runtime libc++, libc++abi and
+libunwind (libc++.dll, libunwind.dll beside them; libc++, libc++abi and mingw-w64 are also linked into Buffy.exe and the recompiler
+tools). Built with llvm-mingw (https://github.com/mstorsjo/llvm-mingw). Apache License v2.0 with LLVM Exceptions: the text is
+licenses\LLVM-LICENSE.txt (also in compiler\), with the notices of libc++, libc++abi and libunwind beside it.
+
+mingw-w64 (https://www.mingw-w64.org): the C runtime and headers the executables are built with, statically. Its licences, which
+need their notices passed on with the binaries, are licenses\mingw-w64-runtime-COPYING.txt and mingw-w64-COPYING.txt.
