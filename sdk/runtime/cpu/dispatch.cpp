@@ -1,3 +1,17 @@
+#ifdef XBE_GAME_CODE_DLL
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
+#include <cxxabi.h>
+#include <filesystem>
+#include <typeinfo>
+#endif
+
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -19,6 +33,21 @@ namespace {
 std::vector<X86Func*> g_table;  // one slot per code byte
 std::vector<bool> g_continuation;
 uint32_t g_lo = 0, g_hi = 0;
+#ifdef XBE_GAME_CODE_DLL
+// the recompiled code's tables, exported by the game code DLL
+const X86FuncMapping* g_mappings = nullptr;
+const uint32_t* g_continuations = nullptr;
+uint32_t g_entry = 0;
+#else
+// linked into this program
+const X86FuncMapping* g_mappings = X86FuncMappings;
+const uint32_t* g_continuations = X86Continuations;
+uint32_t g_entry = X86EntryPoint;
+#endif
+#ifdef XBE_GAME_CODE_DLL
+// The resume that x86_icall last threw on this thread, for x86_try_resume: the game code DLL's catch cannot name the type
+thread_local X86Resume t_resume{};
+#endif
 
 struct Export {
     const char* name = nullptr;
@@ -34,15 +63,38 @@ constexpr uint32_t kKernelThunkBase = 0xFE000000;
 
 namespace dispatch {
 
+#ifdef XBE_GAME_CODE_DLL
+// the game code DLL: its tables come by name, as the delay loaded imports carry only functions
+bool Load(const std::filesystem::path& dll) {
+    HMODULE m = LoadLibraryW(dll.c_str());
+    if (!m) return false;
+    g_mappings = reinterpret_cast<const X86FuncMapping*>(GetProcAddress(m, "X86FuncMappings"));
+    g_continuations = reinterpret_cast<const uint32_t*>(GetProcAddress(m, "X86Continuations"));
+    auto* lo = reinterpret_cast<const uint32_t*>(GetProcAddress(m, "X86CodeBase"));
+    auto* hi = reinterpret_cast<const uint32_t*>(GetProcAddress(m, "X86CodeEnd"));
+    auto* entry = reinterpret_cast<const uint32_t*>(GetProcAddress(m, "X86EntryPoint"));
+    if (!g_mappings || !g_continuations || !lo || !hi || !entry) return false;
+    g_lo = *lo;
+    g_hi = *hi;
+    g_entry = *entry;
+    return true;
+}
+#endif
+
+uint32_t EntryPoint() { return g_entry; }
+bool InCode(uint32_t va) { return va >= g_lo && va < g_hi; }
+
 void Init() {
+#ifndef XBE_GAME_CODE_DLL
     g_lo = X86CodeBase;
     g_hi = X86CodeEnd;
+#endif
     g_table.assign(g_hi - g_lo, nullptr);
     size_t n = 0;
-    for (const X86FuncMapping* m = X86FuncMappings; m->host; m++, n++)
+    for (const X86FuncMapping* m = g_mappings; m->host; m++, n++)
         if (m->guest >= g_lo && m->guest < g_hi) g_table[m->guest - g_lo] = m->host;
     g_continuation.assign(g_hi - g_lo, false);
-    for (const uint32_t* c = X86Continuations; *c; c++)
+    for (const uint32_t* c = g_continuations; *c; c++)
         if (*c >= g_lo && *c < g_hi) g_continuation[*c - g_lo] = true;
     LOGI("dispatch: %zu functions over %08X..%08X", n, g_lo, g_hi);
 }
@@ -71,7 +123,12 @@ uint32_t KernelThunkAddress(uint32_t ordinal) { return kKernelThunkBase + ordina
 
 void x86_icall(X86Context& ctx, uint8_t* base, uint32_t target) {
     ctx.last_icall = target;
-    if (target >= g_lo && target < g_hi && g_continuation[target - g_lo]) throw X86Resume{target, ctx.esp};
+    if (target >= g_lo && target < g_hi && g_continuation[target - g_lo]) {
+#ifdef XBE_GAME_CODE_DLL
+        t_resume = {target, ctx.esp};
+#endif
+        throw X86Resume{target, ctx.esp};
+    }
     if (X86Func* f = dispatch::Find(target)) {
         f(ctx, base);
         return;
@@ -102,6 +159,18 @@ void x86_resume(X86Context& ctx, uint8_t* base, const X86Resume& r) {
     ctx.esp = r.esp;
     dispatch::Find(r.target)(ctx, base);
 }
+
+#ifdef XBE_GAME_CODE_DLL
+// For the game code DLL's catch of everything: when the exception is a resume (not another one passing through) that this
+// frame may take, make it. The copy is kept as the continuation may throw another resume.
+bool x86_try_resume(X86Context& ctx, uint8_t* base, uint32_t frame) {
+    const std::type_info* type = abi::__cxa_current_exception_type();
+    if (!type || *type != typeid(X86Resume) || t_resume.esp >= frame) return false;
+    X86Resume r = t_resume;
+    x86_resume(ctx, base, r);
+    return true;
+}
+#endif
 
 void x86_kernel(X86Context& ctx, uint8_t* base, uint32_t ordinal) {
     if (ordinal < 400 && g_exports[ordinal].fn) {
@@ -173,7 +242,7 @@ void LogGuestStack(X86Context& ctx, int words) {
         uint32_t a = ctx.esp + uint32_t(i) * 4;
         if (!mem::IsCommitted(a)) break;
         uint32_t v = R32(a);
-        if (v >= X86CodeBase && v < X86CodeEnd) LOGE("  [esp+%03X] %08X", i * 4, v);
+        if (dispatch::InCode(v)) LOGE("  [esp+%03X] %08X", i * 4, v);
     }
 }
 }  // namespace kernel

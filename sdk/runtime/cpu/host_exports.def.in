@@ -1,0 +1,26 @@
+; What the game code DLL calls in this executable besides its own API (X86_HOST_API and X86_FUNC export themselves, by
+; attribute): the C++ exception runtime, which the DLL's frames unwind through, and the C library, which it is built without.
+; Written by CMake into the build folder as the executable's module definition file, @XBE_TARGET@.exe being its own name.
+; It lists exactly what the DLL imports of these; the checks under "Game code DLL" in README.md compare the two.
+NAME @XBE_TARGET@.exe
+EXPORTS
+    __gxx_personality_seh0
+    __cxa_begin_catch
+    __cxa_end_catch
+    __cxa_rethrow
+    _Unwind_Resume
+    _ZSt9terminatev
+    memcpy = x86_memcpy
+    memmove = x86_memmove
+    memset = x86_memset
+    sin = x86_sin
+    cos = x86_cos
+    tan = x86_tan
+    atan2 = x86_atan2
+    fmod = x86_fmod
+    sqrt = x86_sqrt
+    sqrtf = x86_sqrtf
+    log2 = x86_log2
+    exp2 = x86_exp2
+    ldexp = x86_ldexp
+    frexp = x86_frexp

@@ -1,0 +1,9 @@
+#pragma once
+#include <cstdint>
+
+// the builtins call the executable's memcpy, memmove and memset (host_exports.def.in) unless the compiler inlines them
+namespace std {
+inline void* memcpy(void* d, const void* s, size_t n) { return __builtin_memcpy(d, s, n); }
+inline void* memmove(void* d, const void* s, size_t n) { return __builtin_memmove(d, s, n); }
+inline void* memset(void* d, int v, size_t n) { return __builtin_memset(d, v, n); }
+}  // namespace std
