@@ -110,7 +110,7 @@ constexpr const char* kLive[] = {
 constexpr const char* kLive[] = {
     "display.show_fps", "display.vsync", "display.render_percent", "graphics.upscaler", "graphics.upscaler_quality", "graphics.anti_aliasing",
     "graphics.anisotropic_filtering", "graphics.lod_bias", "graphics.console_textures", "graphics.sharpening", "graphics.smooth_2d",
-    "graphics.colour_look", "graphics.look_strength", "graphics.brightness", "graphics.movie_display",
+    "graphics.colour_look", "graphics.look_strength", "graphics.brightness", "graphics.widescreen", "graphics.movie_display",
     "graphics.movie_sharpening", "graphics.cutscene_audio_delay", "input.vibration", "input.stick_deadzone",
     "input.trigger_threshold", "window.pause_unfocused", "window.mute_unfocused", "window.background_input", "keyboard.mouse_aim", "keyboard.mouse_sensitivity", "keyboard.mouse_invert_y", "keyboard.mouse_menus", "keyboard.enabled",
     "keyboard.player", "achievements.notify", "discord.enabled"};

@@ -117,6 +117,8 @@ What this port changed:
 - `sdk/runtime/xdk/d3d8.cpp`: a host `D3DDevice_IsBusy`, as the library's reads GPU registers that don't exist here.
 - `sdk/runtime/app/settings.cpp`, `app.h`: outside Windows, widescreen makes a 4:3 window size wide rather than turning
   itself off. `g_frame_43` lets a game show 4:3 for now, and `WideAspect` is the shape it would otherwise have.
+- `sdk/runtime/gpu/d3d12.cpp`: `ApplySettings` leaves the render targets alone while the menu holds the game (`app::Held`), as the
+  Vulkan renderer does, so a change of render resolution or widescreen from the menu doesn't blank the picture behind it.
 - `sdk/runtime/app/`: `[display] high_frame_rate` and `g_high_frame_rate`, which `Pace` in `sdk/host/main.cpp` follows.
 - `sdk/runtime/app/app.h`: `MetalLayer` and `g_pixel_height`, for the renderer and the render scale.
 - `sdk/runtime/core/input.cpp`, `input.h`: outside Windows the window thread takes SDL's events and tells of controllers

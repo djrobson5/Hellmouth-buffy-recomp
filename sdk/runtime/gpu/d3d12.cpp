@@ -5060,6 +5060,10 @@ void D3D12Backend::ApplySettings() {
     }
     if (up_failed_ && st.upscaler != up_failed_) up_failed_ = 0;
     float want = TargetScale(), want_x = WideMul();
+    // not while the menu holds the game (it presents the last frame again): the targets made again would be empty and the
+    // picture behind the menu would go black; they follow when the game runs again, as the Vulkan renderer's do (the
+    // extension isn't asked either, so a change it reports once isn't lost)
+    if (app::Held()) return;
     bool remake = ext_ && ext_->Settings();
     uint32_t samples = PickSamples();
     if (std::fabs(want - scale_) > 1e-4f || std::fabs(want_x - xmul_) > 1e-4f || remake || samples != samples_) {
