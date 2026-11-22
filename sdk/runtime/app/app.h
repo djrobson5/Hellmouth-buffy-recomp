@@ -73,7 +73,7 @@ struct Settings {
     bool vsync = true;
     uint32_t aniso = 0;              // 0 as the game asks
     std::string join_ip;                   // co-op: a host past the LAN the system link search also asks
-    bool widescreen = false;               // 16:9 picture on a wide display; false keeps the console's 4:3 with side bars
+    bool widescreen = true;                // 16:9 picture on a wide display (a screen narrower than 3:2 keeps 4:3); false keeps the console's 4:3 with side bars
     bool texture_dump = false;             // write each texture as it is first seen to textures/dump (texture packs)
     bool texture_replace = true;           // draw texture pack files from textures/replace in place of the game's
     float brightness = 1.0f;               // a curve over the picture as shown: 1 the game's own, more lifts the darks

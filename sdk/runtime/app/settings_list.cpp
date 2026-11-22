@@ -139,7 +139,7 @@ std::vector<cfg::Desc> SettingsList() {
          {"Direct3D 12", "Vulkan (in development)"}},
 #endif
         {"graphics", "widescreen", Type::Bool, "Widescreen correction",
-         "Shows more at the sides. Off keeps the original 4:3 picture, with bars at the sides.", &s.widescreen, nullptr,
+         "Shows more at the sides on a screen 3:2 or wider (on by default). Off keeps the original 4:3 picture, with bars at the sides.", &s.widescreen, nullptr,
          nullptr, 0, 0, {}, "widescreen"},
         {"graphics", "movie_display", Type::Choice, "Movie display",
          "Fit: the movies fill a wide screen with correct proportions (the black bars above and below the film are "

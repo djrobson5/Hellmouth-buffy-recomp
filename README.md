@@ -16,7 +16,7 @@ a Mac program, and the Xbox kernel and libraries are implemented on the Mac. It 
 
 ## Screenshots
 
-Taken from the port at its default settings, in 4:3.
+Taken from the port, in 4:3 (the front end and movies stay 4:3).
 
 | | |
 |---|---|
@@ -456,8 +456,10 @@ except where it says otherwise.
 
 - `[display] mode = "fullscreen"` uses macOS's own full screen at the desktop's resolution. `[display] show_fps = true` puts the
   frame rate in the window's title.
-- `[graphics] widescreen = true`, or the menu's "Widescreen correction", shows levels at 16:9 with more of the scene at the
-  sides, and the HUD and text in proportion. The front end and movies stay 4:3 with bars. The default window becomes 1280x720.
+- `[graphics] widescreen` (on by default), or the menu's "Widescreen correction" (F10, on Windows too), shows levels at 16:9 with
+  more of the scene at the sides, and the HUD and text in proportion. The front end and movies stay 4:3 with bars. A screen
+  narrower than 3:2 keeps the 4:3 picture. `false` keeps the original 4:3 everywhere. On a Mac the default window is 1280x720. A
+  settings file that already says `widescreen = false` keeps it off.
 - `[display] high_frame_rate = true`, or the menu's "120 frames a second", runs at 120 on a screen that shows 120. Game speed
   holds. Characters' positions still step at 60 a second, as the game is built that way; the camera and everything else update
   on every frame. Movies keep their own rate.

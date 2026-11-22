@@ -85,12 +85,12 @@
 
     {
       "id": "widescreen", "label": "Widescreen correction", "group": "Picture",
-      "help": "Shows more at the sides on a wide screen. Off keeps the original 4:3 picture, with bars at the sides.",
+      "help": "Shows more at the sides on a wide screen (on by default). Off keeps the original 4:3 picture, with bars at the sides.",
       "choices": [
         { "label": "Off", "set": { "graphics/widescreen": "false" } },
         { "label": "On", "set": { "graphics/widescreen": "true" } }
       ],
-      "defaults": { "graphics/widescreen": "false" }
+      "defaults": { "graphics/widescreen": "true" }
     },
     {
       "id": "brightness", "label": "Brightness", "group": "Picture",
