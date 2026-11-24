@@ -64,6 +64,8 @@ What this port changed:
     selectable and is used when Vulkan cannot start); the Windows help says what Vulkan lacks.
   - `sdk/runtime/core/input.cpp`: `HeldOnAnyController` (the face buttons, as XInput's masks) for the first start's window, and `Init`
     can be called twice.
+  - `sdk/runtime/core/input.cpp`: the rumble log line comes for the first effect and then at most every 10 s, with the number of
+    effects since the last line and the strongest, instead of once a session.
   - `--prepare` (`app::PrepareOnly`, in `game_code.cpp`, called from `main.cpp` before the settings are read): the same build with no
     window, `progress` lines on stdout, exit 0 or `kExitBuildFailed` with the reason on stderr.
   - `sdk/tools/recomp`: `[xbe] library`, which only a DLL build needs, makes the recompiler write `exports.def` (what the DLL exports: its tables and one

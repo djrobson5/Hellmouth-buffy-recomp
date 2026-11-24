@@ -2,6 +2,7 @@
 #include "core/input.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <iterator>
 #include <mutex>
@@ -234,12 +235,21 @@ void Rumble(int port, uint16_t left, uint16_t right) {
     uint32_t pct = std::min(app::Get().vibration, 100u);
     left = uint16_t(left * pct / 100);
     right = uint16_t(right * pct / 100);
-    static bool logged = false;
-    if (!logged && (left || right)) {
-        logged = true;
-        LOGR("input: rumble on controller %d (vibration %u%%)", port + 1, pct);
-    }
     std::lock_guard lock(g_lock);
+    // a line for the first effect, then at most one every 10 s, counting the effects since the last line
+    static uint32_t effects = 0, peak = 0;
+    static std::chrono::steady_clock::time_point last{};
+    if (left || right) {
+        effects++;
+        peak = std::max<uint32_t>(peak, std::max(left, right));
+        const auto now = std::chrono::steady_clock::now();
+        if (last == std::chrono::steady_clock::time_point{} || now - last >= std::chrono::seconds(10)) {
+            LOGR("input: rumble on controller %d: %u effects, strongest %u of 65535 (vibration %u%%)", port + 1, effects,
+                 peak, pct);
+            effects = peak = 0;
+            last = now;
+        }
+    }
     if (port >= 0 && port < 4 && g_pads[port]) SDL_RumbleGamepad(g_pads[port], left, right, 0);
 }
 
