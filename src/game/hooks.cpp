@@ -90,3 +90,21 @@ X86_FUNC(sub_00086190) {
     if (now != want) kernel::W32(limit, want);
     __imp__sub_00086190(ctx, base);
 }
+
+// TConsole::LoadVariables (thiscall) reads t:\vars.cfg into the game's options. The game's own vibration switch
+// (TGameOptions +0xE0, set on the controller options screen) is off by default, and the game saves rumble=false into
+// vars.cfg by itself, so no one felt rumble unless they found that switch (issue #5). It's turned on after every
+// load. The switch still works for the rest of the session, and F10 Vibration at 0 keeps the pad still for good.
+X86_EXTERN_FUNC(__imp__sub_00014030);
+X86_FUNC(sub_00014030) {
+    __imp__sub_00014030(ctx, base);
+    const uint32_t options = kernel::CallGuest(ctx, 0x93660, {});  // TGO::Interface_Options
+    if (!options) {
+        LOGW("buffy: no game options after loading vars.cfg, vibration switch left as it was");
+        return;
+    }
+    if (!base[options + 0xE0]) {
+        base[options + 0xE0] = 1;
+        LOGI("buffy: game's vibration switch turned on");
+    }
+}
